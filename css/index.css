@@ -1,0 +1,7 @@
+.zone-title {
+  margin-bottom: 8px;
+}
+
+#editor-code-textarea {
+  resize: none;
+}

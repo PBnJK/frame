@@ -1,0 +1,4 @@
+The FRAME spec
+
+- Resolution: 64x64
+- Colors: 8
