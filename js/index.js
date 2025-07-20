@@ -11,7 +11,9 @@ const init = () => {
     const sourceProgram = editorCodeEditor.value;
 
     const assembledProgram = assemble(sourceProgram);
-    runProgram(assembledProgram);
+    if (assembledProgram) {
+      runProgram(assembledProgram);
+    }
   });
 
   editorStopButton.addEventListener("click", () => {

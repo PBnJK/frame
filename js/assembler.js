@@ -4,14 +4,17 @@
 
 "use strict";
 
+const START_POINT = "@main";
+
 const TokenType = {
   INSTRUCTION: 0,
   IDENTIFIER: 1,
   LABEL: 2,
   NUMBER: 3,
   REGISTER: 4,
+  DIRECTIVE: 5,
 
-  COMMA: 5,
+  COMMA: 6,
 
   ERROR: 254,
   EOF: 255,
@@ -20,23 +23,32 @@ const TokenType = {
 const Opcode = {
   HLT: 0x0,
   MOV: 0x1,
+  JMP: 0x2,
+  JMPC: 0x3,
+  EQU: 0x4,
+  NOT: 0x5,
+  ADD: 0x6,
+  CALL: 0x7,
+  RET: 0x8,
 };
 
 const Mode = {
   O: 0,
   A: 1,
   K: 2,
-  AB: 3,
-  AK: 4,
-  ABC: 5,
-  ABK: 6,
+  KK: 3,
+  AB: 4,
+  AK: 5,
+  ABC: 6,
+  ABK: 7,
 };
 
 class Assembler {
   #source;
+  #idx;
 
   #program;
-  #idx;
+  #pos;
 
   #line;
   #char;
@@ -44,6 +56,7 @@ class Assembler {
   #hadError;
 
   #token;
+  #hasLeftoverToken;
 
   #labels;
   #unresolvedLabels;
@@ -51,6 +64,13 @@ class Assembler {
   #instructionEmitMap = {
     hlt: this.#emitHLT.bind(this),
     mov: this.#emitMOV.bind(this),
+    jmp: this.#emitJMP.bind(this),
+    jmpc: this.#emitJMPC.bind(this),
+    equ: this.#emitEQU.bind(this),
+    not: this.#emitNOT.bind(this),
+    add: this.#emitADD.bind(this),
+    call: this.#emitCALL.bind(this),
+    ret: this.#emitRET.bind(this),
   };
 
   constructor() {}
@@ -61,13 +81,14 @@ class Assembler {
     this.#source = source;
     this.#assemble();
 
-    console.log(`compiled: ${this.#program}`);
     return this.#hadError ? null : this.#program;
   }
 
   reset() {
-    this.#program = [];
     this.#idx = 0;
+
+    this.#program = new Uint8Array(MEMORY_SIZE);
+    this.#pos = 0;
 
     this.#line = 1;
     this.#char = 1;
@@ -75,9 +96,10 @@ class Assembler {
     this.#hadError = false;
 
     this.#token = null;
+    this.#hasLeftoverToken = false;
 
-    this.#labels = [];
-    this.#unresolvedLabels = [];
+    this.#labels = new Map();
+    this.#unresolvedLabels = new Map();
   }
 
   #assemble() {
@@ -90,12 +112,36 @@ class Assembler {
         break;
       }
 
-      const err = this.#emitToken();
-      if (err) {
-        this.#logError(err);
-        break;
-      }
+      do {
+        this.#hasLeftoverToken = false;
+        if (!this.#handleToken()) {
+          break;
+        }
+      } while (this.#hasLeftoverToken);
     }
+
+    if (this.#unresolvedLabels.size !== 0) {
+      const asString = JSON.stringify(this.#unresolvedLabels);
+      const msg = `label(s) ${asString} could not be resolved`;
+
+      const err = this.#createError(msg);
+      this.#logError(err);
+    }
+
+    if (this.#labels.has(START_POINT)) {
+      const addr = this.#labels.get(START_POINT);
+
+      const lo = addr & 0xff;
+      this.#program[START_ADDR] = lo;
+
+      const hi = (addr >> 8) & 0xff;
+      this.#program[START_ADDR + 1] = hi;
+    } else {
+      this.#program[START_ADDR] = 0;
+      this.#program[START_ADDR + 1] = 0;
+    }
+
+    console.log(this.#program);
   }
 
   #logError(token) {
@@ -129,6 +175,8 @@ class Assembler {
         return this.#assembleLabel();
       case "$":
         return this.#assembleRegister();
+      case ".":
+        return this.#assembleDirective();
       case ",":
         return this.#createToken(TokenType.COMMA, char);
     }
@@ -267,6 +315,12 @@ class Assembler {
     return this.#createToken(TokenType.REGISTER, num);
   }
 
+  /* Assembles a directive */
+  #assembleDirective() {
+    const identifier = this.#readIdentifier();
+    return this.#createToken(TokenType.DIRECTIVE, identifier);
+  }
+
   /* Creates an error token */
   #createError(msg) {
     return this.#createToken(TokenType.ERROR, msg);
@@ -282,6 +336,17 @@ class Assembler {
     };
   }
 
+  /* Handles the scanned token */
+  #handleToken() {
+    const err = this.#emitToken();
+    if (!err) {
+      return true;
+    }
+
+    this.#logError(err);
+    return false;
+  }
+
   /* Emits instruction(s) based on a token */
   #emitToken() {
     const token = this.#token;
@@ -290,6 +355,10 @@ class Assembler {
         return this.#emitInstruction(token);
       case TokenType.NUMBER:
         break;
+      case TokenType.LABEL:
+        return this.#emitLabel(token);
+      case TokenType.DIRECTIVE:
+        return this.#emitDirective(token);
       default:
         break;
     }
@@ -301,6 +370,80 @@ class Assembler {
     return emitter();
   }
 
+  /* Emits a label */
+  #emitLabel(token) {
+    const label = token.lexeme;
+    const addr = this.#pos;
+
+    this.#labels.set(label, addr);
+
+    const unresolved = this.#unresolvedLabels.get(label);
+    if (unresolved) {
+      this.#fixUnresolvedLabel(label, addr, unresolved);
+    }
+  }
+
+  /* Fixes a now-declared unresolved label */
+  #fixUnresolvedLabel(label, addr, unresolved) {
+    for (const i of unresolved) {
+      let op = this.#program[i];
+
+      const mode = (op >> 5) & 0x7;
+      switch (mode) {
+        case Mode.K:
+          op |= addr << 8;
+          break;
+        case Mode.AK:
+          op |= addr << 11;
+          break;
+        case Mode.ABK:
+          op |= addr << 14;
+          break;
+      }
+
+      this.#program[i] = op;
+    }
+
+    this.#unresolvedLabels.delete(label);
+  }
+
+  /* Emits a directive */
+  #emitDirective(token) {
+    const directives = {
+      ".addr": this.#emitDirectiveAddr.bind(this),
+    };
+
+    const directive = directives[token.lexeme];
+    if (directive) {
+      return directive();
+    }
+
+    return this.#createError(`no such directive "${token.lexeme}"`);
+  }
+
+  /* Emits a .addr directive */
+  #emitDirectiveAddr() {
+    const [addr, err] = this.#getDirectiveNumberArg();
+    if (err) {
+      return err;
+    }
+
+    this.#pos = addr;
+  }
+
+  /* (Attempts to) retrieve a number argument for a directive */
+  #getDirectiveNumberArg() {
+    const arg = this.#assembleToken();
+    if (arg.type !== TokenType.NUMBER) {
+      const asString = this.#getTypeAsString(arg.type);
+      const msg = `expected a number, but got ${asString}`;
+
+      return [null, this.#createError(msg)];
+    }
+
+    return [parseInt(arg.lexeme, 10), null];
+  }
+
   /* Emits a HLT instruction */
   #emitHLT() {
     return this.#emitInstructionBytes(Opcode.HLT);
@@ -308,10 +451,46 @@ class Assembler {
 
   /* Emits a MOV instruction */
   #emitMOV() {
-    return this.#emitInstructionBytes(Opcode.MOV, [Mode.ABC, Mode.ABK]);
+    return this.#emitInstructionBytes(Opcode.MOV, [Mode.AB, Mode.AK]);
   }
 
-  #emitInstructionBytes(op, validModes) {
+  /* Emits a JMP instruction */
+  #emitJMP() {
+    return this.#emitInstructionBytes(Opcode.JMP, [Mode.K]);
+  }
+
+  /* Emits a JMPC instruction */
+  #emitJMPC() {
+    return this.#emitInstructionBytes(Opcode.JMPC, [Mode.K]);
+  }
+
+  /* Emits an EQU instruction */
+  #emitEQU() {
+    return this.#emitInstructionBytes(Opcode.EQU, [Mode.AB, Mode.AK]);
+  }
+
+  /* Emits a NOT instruction */
+  #emitNOT() {
+    return this.#emitInstructionBytes(Opcode.NOT, [Mode.O, Mode.AB, Mode.AK]);
+  }
+
+  /* Emits an ADD instruction */
+  #emitADD() {
+    return this.#emitInstructionBytes(Opcode.ADD, [Mode.ABC, Mode.ABK]);
+  }
+
+  /* Emits a CALL instruction */
+  #emitCALL() {
+    return this.#emitInstructionBytes(Opcode.CALL, [Mode.K], true);
+  }
+
+  /* Emits a RET instruction */
+  #emitRET() {
+    return this.#emitInstructionBytes(Opcode.RET);
+  }
+
+  /* Parses and emits an instruction as bytes */
+  #emitInstructionBytes(op, validModes, long = false) {
     if (!validModes) {
       this.#emitO(op);
       return;
@@ -322,7 +501,8 @@ class Assembler {
 
     if (mode === null || !validModes.includes(mode)) {
       const rArgs = this.#getModeAsString(mode);
-      const msg = `incorrect arguments (received ${rArgs})`;
+      const eArgs = validModes.map((m) => this.#getModeAsString(m)).join("; ");
+      const msg = `incorrect arguments (received ${rArgs}, expected one of: ${eArgs})`;
 
       return this.#createError(msg);
     }
@@ -336,7 +516,7 @@ class Assembler {
         this.#emitA(op, ...values);
         break;
       case Mode.K:
-        this.#emitK(op, ...values);
+        this.#emitK(op, ...values, long);
         break;
       case Mode.AB:
         this.#emitAB(op, ...values);
@@ -353,16 +533,19 @@ class Assembler {
     }
   }
 
+  /* Gets a list of arguments for an instruction */
   #getArguments() {
     const args = [];
     while (true) {
       const arg = this.#getArgument();
       if (arg === null) {
+        this.#hasLeftoverToken = true;
         break;
       }
 
       args.push(arg);
       if (!this.#expect(TokenType.COMMA)) {
+        this.#hasLeftoverToken = true;
         break;
       }
     }
@@ -370,17 +553,43 @@ class Assembler {
     return args;
   }
 
+  /* Gets the next token as an argument */
   #getArgument() {
     let token = this.#assembleToken();
     switch (token.type) {
       case TokenType.NUMBER:
       case TokenType.REGISTER:
         return token;
+      case TokenType.LABEL:
+        return this.#resolveLabel(token);
     }
 
+    this.#token = token;
     return null;
   }
 
+  /* Resolves a label's address, if possible */
+  #resolveLabel(token) {
+    const label = token.lexeme;
+    if (this.#labels.has(label)) {
+      const addr = this.#labels.get(label);
+      return this.#createToken(TokenType.NUMBER, addr);
+    }
+
+    const addr = this.#pos;
+    if (this.#unresolvedLabels.has(label)) {
+      const labels = this.#unresolvedLabels.get(label);
+      labels.push(addr);
+    } else {
+      this.#unresolvedLabels.set(label, [addr]);
+    }
+
+    return this.#createToken(TokenType.NUMBER, 0);
+  }
+
+  /* Gets the mode from a list of arguments
+   * TODO: Refactor...
+   */
   #getModeFromArguments(args) {
     if (args.length === 0) {
       return Mode.O;
@@ -410,6 +619,7 @@ class Assembler {
     return null;
   }
 
+  /* Turns a mode into a user-friendly string */
   #getModeAsString(mode) {
     switch (mode) {
       case Mode.O:
@@ -429,6 +639,31 @@ class Assembler {
     }
   }
 
+  /* Turns a token type into a user-friendly */
+  #getTypeAsString(type) {
+    switch (type) {
+      case TokenType.INSTRUCTION:
+        return "instruction";
+      case TokenType.IDENTIFIER:
+        return "identifier";
+      case TokenType.LABEL:
+        return "label";
+      case TokenType.NUMBER:
+        return "number";
+      case TokenType.REGISTER:
+        return "register";
+      case TokenType.DIRECTIVE:
+        return "directive";
+      case TokenType.COMMA:
+        return "comma";
+      case TokenType.ERROR:
+        return "error";
+      case TokenType.EOF:
+        return "EOF";
+    }
+  }
+
+  /* Returns the values of arguments */
   #getValuesFromArguments(args) {
     return args.map((arg) => {
       switch (arg.type) {
@@ -447,85 +682,96 @@ class Assembler {
 
   /* Emits A op */
   #emitA(op, a) {
-    let instruction = this.#createInstruction(op, Mode.A);
-    instruction |= this.#prepareA(a);
+    const opcode = this.#createInstruction(op, Mode.A);
+    const arg = this.#prepareA(a);
 
-    this.#emit(instruction);
+    this.#emit(opcode);
+    this.#emit(arg);
   }
 
   /* Emits K op */
-  #emitK(op, k) {
-    let instruction = this.#createInstruction(op, Mode.K);
-    instruction |= this.#prepareK(k);
+  #emitK(op, k, long) {
+    const constant = this.#prepareK(k);
 
-    this.#emit(instruction);
+    if (long) {
+      const opcode = this.#createInstruction(op, Mode.KK);
+      this.#emit(opcode);
+
+      const lo = constant & 0xff;
+      this.#emit(lo);
+
+      const hi = (constant >> 8) & 0xff;
+      this.#emit(hi);
+    } else {
+      const opcode = this.#createInstruction(op, Mode.K);
+      this.#emit(opcode | (constant << 8));
+    }
   }
 
   /* Emits AB op */
   #emitAB(op, a, b) {
-    let instruction = this.#createInstruction(op, Mode.AB);
-    instruction |= this.#prepareA(a);
-    instruction |= this.#prepareB(b);
+    const opcode = this.#createInstruction(op, Mode.AB);
+    const args = this.#prepareA(a) | this.#prepareB(b);
 
-    this.#emit(instruction);
+    this.#emit(opcode);
+    this.#emit(args);
   }
 
   /* Emits ABC op */
   #emitABC(op, a, b, c) {
-    let instruction = this.#createInstruction(op, Mode.ABC);
-    instruction |= this.#prepareA(a);
-    instruction |= this.#prepareB(b);
-    instruction |= this.#prepareC(c);
+    const opcode = this.#createInstruction(op, Mode.ABC);
+    const args = this.#prepareA(a) | this.#prepareB(b);
 
-    this.#emit(instruction);
+    this.#emit(opcode);
+    this.#emit(args);
+    this.#emit(this.#prepareC(c));
   }
 
   /* Emits ABK op */
   #emitABK(op, a, b, k) {
-    let instruction = this.#createInstruction(op, Mode.ABK);
-    instruction |= this.#prepareABK(a, b, k);
+    const opcode = this.#createInstruction(op, Mode.ABK);
+    const args = this.#prepareA(a) | this.#prepareB(b);
+    const constant = this.#prepareK(k);
 
-    this.#emit(instruction);
+    this.#emit(opcode);
+    this.#emit(args);
+    this.#emit(constant);
   }
 
   /* Emits AK op */
   #emitAK(op, a, k) {
-    let instruction = this.#createInstruction(op, Mode.AK);
-    instruction |= this.#prepareA(a);
-    instruction |= this.#prepareK(k);
+    const opcode = this.#createInstruction(op, Mode.AK);
+    const arg = this.#prepareA(a);
+    const constant = this.#prepareK(k);
 
-    this.#emit(instruction);
+    this.#emit(opcode);
+    this.#emit(arg);
+    this.#emit(constant);
   }
 
   /* Prepare A register for instruction */
   #prepareA(a) {
-    return (a & 0x07) << 8;
+    return a & 0x07;
   }
 
   /* Prepare B register for instruction */
   #prepareB(b) {
-    return (b & 0x07) << 11;
+    return (b & 0x07) << 3;
   }
 
   /* Prepare C register for instruction */
   #prepareC(c) {
-    return (c & 0x07) << 14;
+    return c & 0x07;
   }
 
   /* Prepare K constant for instruction */
   #prepareK(k) {
-    return (k & 0xff) << 8;
-  }
-
-  /* Prepare ABK for instruction */
-  #prepareABK(a, b, k) {
-    k = (k & 0xff) << 14;
-    return this.#prepareA(a) | this.#prepareB(b) | k;
+    return k & 0xffff;
   }
 
   /* Emits an instruction */
   #emit(instruction) {
-    this.#program.push(instruction);
+    this.#program[this.#pos++] = instruction;
   }
 
   /* Creates a base instruction with opcode and a mode */

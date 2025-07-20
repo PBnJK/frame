@@ -11,12 +11,16 @@ const FRAME_CANVAS_SCALE = 8;
 const FRAME_CANVAS_W = FRAME_WIN_W * FRAME_CANVAS_SCALE;
 const FRAME_CANVAS_H = FRAME_WIN_H * FRAME_CANVAS_SCALE;
 
-const MEMORY_SIZE = 0xffff;
-
-const ROM_START_ADDR = 0x0000;
-const ROM_END_ADDR = 0xefff;
+const MEMORY_SIZE = 0xffff + 1;
 
 const RUN_INTERVAL = 100;
+
+const START_ADDR = 0xfffe;
+
+const Flag = {
+  CONDITIONAL: Symbol("Conditional"),
+  CARRY: Symbol("Carry"),
+};
 
 /* The main FRAME VM class
  * Responsible for running FRAME programs
@@ -29,14 +33,20 @@ class FrameVM {
   #sp;
   #pc;
 
+  #flags;
+
   #memory;
 
   #running;
   #runID;
 
+  #instructions;
+
   constructor() {
     this.#initCanvas();
     this.#initMemory();
+    this.#initInstructions();
+    this.#initFlags();
 
     this.#registers = {};
     this.reset();
@@ -52,20 +62,38 @@ class FrameVM {
   loadProgram(program) {
     this.stop();
     this.reset();
-    for (let i = ROM_START_ADDR; i < program.length && i < ROM_END_ADDR; i++) {
-      this.#memory[i] = program[i];
+    for (let i = 0; i < MEMORY_SIZE; i++) {
+      this.setMemory(i, program[i]);
     }
   }
 
   /* Runs the VM */
   run() {
+    this.setPC(this.getMemory16(START_ADDR));
+
     this.#running = true;
     this.#runID = setInterval(this.runCallback.bind(this), RUN_INTERVAL);
   }
 
+  /* Executes a single instruction */
   runCallback() {
-    const op = this.#memory[this.#pc++];
-    console.log(op);
+    this.#printState();
+
+    const instruction = this.fetchNext();
+    const [opcode, mode] = this.#parseInstruction(instruction);
+
+    console.log("exec:", instruction, opcode, mode);
+
+    const callback = this.#instructions[opcode];
+    callback(mode);
+  }
+
+  /* Fetches the next byte */
+  fetchNext() {
+    const next = this.getMemory(this.#pc++);
+    this.#pc &= 0xffff;
+
+    return next;
   }
 
   /* Resets the VM */
@@ -90,9 +118,32 @@ class FrameVM {
     this.#running = false;
   }
 
+  /* Sets a value in memory */
+  setMemory(addr, to) {
+    this.#memory[addr] = to;
+  }
+
+  /* Sets a 16-bit value in memory */
+  setMemory16(addr, lo, hi) {
+    this.#memory[addr++] = hi;
+    this.#memory[addr] = lo;
+  }
+
+  /* Gets a value from memory */
+  getMemory(addr) {
+    return this.#memory[addr];
+  }
+
+  /* Gets a 16-bit value from memory */
+  getMemory16(addr) {
+    const hi = this.#memory[addr++];
+    const lo = this.#memory[addr];
+    return hi | (lo << 8);
+  }
+
   /* Sets the register @r to the 8-bit value @to */
   setRegister(r, to) {
-    this.#registers[r] = to;
+    this.#registers[r] = to & 0xff;
   }
 
   /* Returns the contents of register @r */
@@ -100,9 +151,9 @@ class FrameVM {
     return this.#registers[r];
   }
 
-  /* Sets the stack pointer to the 8-bit value @to */
+  /* Sets the stack pointer */
   setSP(to) {
-    this.#sp = to;
+    this.#sp = to & 0xff;
   }
 
   /* Returns the contents of the stack pointer */
@@ -110,14 +161,36 @@ class FrameVM {
     return this.#sp;
   }
 
-  /* Sets the program counter to the 8-bit value @to */
+  /* Sets the program counter */
   setPC(to) {
-    this.#pc = to;
+    this.#pc = to & 0xffff;
   }
 
   /* Returns the contents of the program counter */
   getPC() {
     return this.#pc;
+  }
+
+  /* Sets a flag */
+  setFlag(flag, to) {
+    this.#flags.set(flag, to);
+  }
+
+  /* Returns the value of a flag */
+  getFlag(flag) {
+    return this.#flags.get(flag);
+  }
+
+  /* Pushes a value to the stack */
+  pushToStack(to) {
+    this.setMemory(this.getSP(), to);
+    this.#sp++;
+  }
+
+  /* Pops a value from the stack */
+  popFromStack() {
+    this.#sp--;
+    return this.getMemory(this.getSP());
   }
 
   /* Initializes the HTML canvas */
@@ -129,9 +202,6 @@ class FrameVM {
     this.#ctx = this.#canvas.getContext("2d");
     this.#ctx.scale(FRAME_CANVAS_SCALE, FRAME_CANVAS_SCALE);
     this.#ctx.clearRect(0, 0, this.#canvas.width, this.#canvas.height);
-
-    this.#ctx.fillStyle = "green";
-    this.#ctx.fillRect(8, 8, 8, 8);
   }
 
   /* Initializes the VM registers */
@@ -146,7 +216,209 @@ class FrameVM {
 
   /* Initializes the VM memory */
   #initMemory() {
-    this.#memory = new Uint32Array(MEMORY_SIZE);
+    this.#memory = new Uint8Array(MEMORY_SIZE);
+  }
+
+  /* Initializes the instruction callbacks */
+  #initInstructions() {
+    this.#instructions = {
+      [Opcode.HLT]: () => {
+        this.stop();
+      },
+      [Opcode.MOV]: (mode) => {
+        if (mode === Mode.AB) {
+          const [a, b] = this.#getArgsAB();
+          this.setRegister(a, this.getRegister(b));
+        } else {
+          const [a, k] = this.#getArgsAK();
+          this.setRegister(a, k);
+        }
+      },
+      [Opcode.JMP]: (_) => {
+        const k = this.#getArgsK();
+        this.setPC(k);
+      },
+      [Opcode.JMPC]: (_) => {
+        if (this.getFlag(Flag.CONDITIONAL) !== 0) {
+          const k = this.#getArgsK();
+          this.setPC(k);
+        }
+      },
+      [Opcode.EQU]: (mode) => {
+        if (mode === Mode.AB) {
+          const [a, b] = this.#getArgsAB();
+          const eq = this.getRegister(a) === this.getRegister(b) ? 1 : 0;
+          this.setFlag(Flag.CONDITIONAL, eq);
+        } else {
+          const [a, k] = this.#getArgsAK();
+          const eq = this.getRegister(a) === k ? 1 : 0;
+          this.setFlag(Flag.CONDITIONAL, eq);
+        }
+      },
+      [Opcode.NOT]: (mode) => {
+        switch (mode) {
+          case Mode.O: {
+            const c = this.getFlag(Flag.CONDITIONAL);
+            this.setFlag(Flag.CONDITIONAL, c === 0 ? 1 : 0);
+            break;
+          }
+          case Mode.AB: {
+            const [a, b] = this.#getArgsAB();
+            const c = this.getRegister(b) === 0 ? 1 : 0;
+            this.setRegister(a, c);
+            break;
+          }
+          case Mode.AK: {
+            const [a, k] = this.#getArgsAK();
+            const c = k === 0 ? 1 : 0;
+            this.setRegister(a, c);
+            break;
+          }
+        }
+      },
+      [Opcode.ADD]: (mode) => {
+        if (mode === Mode.ABC) {
+          const [a, b, c] = this.#getArgsABC();
+          const result = this.#addWithCarry(
+            this.getRegister(b),
+            this.getRegister(c),
+          );
+          this.setRegister(a, result);
+        } else {
+          const [a, b, k] = this.#getArgsABK();
+          const result = this.#addWithCarry(this.getRegister(b), k);
+          this.setRegister(a, result);
+        }
+      },
+      [Opcode.CALL]: () => {
+        const pc = this.getPC();
+
+        const lo = pc & 0xff;
+        this.pushToStack(lo);
+
+        const hi = (pc >> 8) & 0xff;
+        this.pushToStack(hi);
+
+        const kk = this.#getArgsKK();
+        this.setPC(kk);
+      },
+      [Opcode.RET]: () => {
+        const hi = this.popFromStack();
+        const lo = this.popFromStack();
+
+        const returnAddress = lo | (hi << 8);
+        console.log(hi, lo, returnAddress);
+        this.setPC(returnAddress);
+      },
+    };
+
+    Object.keys(this.#instructions).forEach((k) =>
+      this.#instructions[k].bind(this),
+    );
+  }
+
+  #addWithCarry(a, b) {
+    const result = a + b;
+    if (result >= 0x100) {
+      this.setFlag(Flag.CARRY, 1);
+    } else {
+      this.setFlag(Flag.CARRY, 0);
+    }
+
+    return result & 0xff;
+  }
+
+  /* Initializes the flags */
+  #initFlags() {
+    this.#flags = new Map();
+
+    this.setFlag(Flag.CONDITIONAL, 0);
+    this.setFlag(Flag.CARRY, 0);
+  }
+
+  /* Prints the internal state of the VM */
+  #printState() {
+    console.log("# STATE START #");
+    for (let i = 0; i < 8; i++) {
+      console.log(`r${i}: ${this.getRegister(i)}`);
+    }
+
+    console.log(`sp: ${this.getSP()}`);
+    console.log(`pc: ${this.getPC()}`);
+    console.log("# STATE END #");
+  }
+
+  /* Breaks down an instruction into opcode, mode and arguments */
+  #parseInstruction(i) {
+    return [this.#getInstructionOpcode(i), this.#getInstructionMode(i)];
+  }
+
+  /* Gets the opcode of the instruction */
+  #getInstructionOpcode(i) {
+    return i & 0x1f;
+  }
+
+  /* Gets the mode of the instruction */
+  #getInstructionMode(i) {
+    return (i >> 5) & 0x7;
+  }
+
+  /* Gets register A from the arguments */
+  #getArgsA() {
+    const next = this.fetchNext();
+    return next & 0x7;
+  }
+
+  /* Gets the argument for a K instruction */
+  #getArgsK() {
+    return this.fetchNext();
+  }
+
+  /* Gets the argument for a KK instruction */
+  #getArgsKK() {
+    const lo = this.fetchNext();
+    const hi = this.fetchNext();
+
+    return lo | (hi << 8);
+  }
+
+  /* Gets the arguments for an AB instruction */
+  #getArgsAB() {
+    const next = this.fetchNext();
+    const a = next & 0x7;
+    const b = (next >> 3) & 0x7;
+
+    return [a, b];
+  }
+
+  /* Gets the arguments for an AK instruction */
+  #getArgsAK() {
+    const next = this.fetchNext();
+    const a = next & 0x7;
+
+    const k = this.fetchNext();
+    return [a, k];
+  }
+
+  /* Gets the arguments for an ABC instruction */
+  #getArgsABC() {
+    const next = this.fetchNext();
+    const a = next & 0x7;
+    const b = (next >> 3) & 0x7;
+
+    const next2 = this.fetchNext();
+    const c = next2 & 0x7;
+    return [a, b, c];
+  }
+
+  /* Gets the arguments for an ABK instruction */
+  #getArgsABK() {
+    const next = this.fetchNext();
+    const a = next & 0x7;
+    const b = (next >> 3) & 0x7;
+
+    const k = this.fetchNext();
+    return [a, b, k];
   }
 }
 

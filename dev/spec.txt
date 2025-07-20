@@ -12,7 +12,29 @@
 - 0x0000-0xEFFF: program memory
 
 ## Instruction Set
-- MOV [v], [r]: Moves value [v] into [r]
+### hlt
+Halts execution
+
+### mov [r], [v]
+Moves value [v] into [r]
+
+### jmp [a]
+Unconditional jump to address [a]
+
+### jmpc [a]
+Jumps to address [a] if the conditional flag is non-zero
+
+### equ [a], [b]
+Compares two values for equality and sets the conditional flag accordingly
+
+### not <r>, <v>
+Logical negation (zero becomes one, non-zero becomes zero)
+- If no operands are given, negates the conditional flag
+- Otherwise, negates [v] and stores the result into [r]
+
+### add [r], [a], [b]
+Adds values [a] and [b] and stores the result into [r]
+[a] and [b] are treated as signed
 
 ## Instruction Formats
 
@@ -25,12 +47,20 @@
 --------------|reg. A  |mode    |opcode
 
 ### K
-15 14|13 12 11 10 09 08|07 06 05|04 03 02 01 00
+15 14 13 12 11 10 09 08|07 06 05|04 03 02 01 00
 constant               |mode    |opcode
 
 ### AB
 15 14|13 12 11|10 09 08|07 06 05|04 03 02 01 00
 -----|reg. B  |reg. A  |mode    |opcode
+
+### AK
+18 17 16 15 14 13 12 11|10 09 08|07 06 05|04 03 02 01 00
+constant               |reg. A  |mode    |opcode
+
+### KK (technically just K)
+23 22 21 20 19 18 17 16 15 14 13 12 11 10 09 08|07 06 05|04 03 02 01 00
+long constant                                  |mode    |opcode
 
 ### ABC
 16 15 14|13 12 11|10 09 08|07 06 05|04 03 02 01 00
