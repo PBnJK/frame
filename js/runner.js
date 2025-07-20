@@ -11,20 +11,34 @@ const FRAME_CANVAS_SCALE = 8;
 const FRAME_CANVAS_W = FRAME_WIN_W * FRAME_CANVAS_SCALE;
 const FRAME_CANVAS_H = FRAME_WIN_H * FRAME_CANVAS_SCALE;
 
+const MEMORY_SIZE = 0xffff;
+
+const ROM_START_ADDR = 0x0000;
+const ROM_END_ADDR = 0xefff;
+
+const RUN_INTERVAL = 100;
+
 /* The main FRAME VM class
  * Responsible for running FRAME programs
  */
 class FrameVM {
-  #canvas = null;
-  #ctx = null;
+  #canvas;
+  #ctx;
 
-  #registers = {};
-  #stackPointer = 0;
+  #registers;
+  #sp;
+  #pc;
 
-  #program = null;
+  #memory;
+
+  #running;
+  #runID;
 
   constructor() {
     this.#initCanvas();
+    this.#initMemory();
+
+    this.#registers = {};
     this.reset();
   }
 
@@ -37,24 +51,43 @@ class FrameVM {
   /* Loads a program into the VM */
   loadProgram(program) {
     this.stop();
-    this.#program = program;
+    this.reset();
+    for (let i = ROM_START_ADDR; i < program.length && i < ROM_END_ADDR; i++) {
+      this.#memory[i] = program[i];
+    }
   }
 
   /* Runs the VM */
   run() {
-    this.reset();
+    this.#running = true;
+    this.#runID = setInterval(this.runCallback.bind(this), RUN_INTERVAL);
+  }
+
+  runCallback() {
+    const op = this.#memory[this.#pc++];
+    console.log(op);
   }
 
   /* Resets the VM */
   reset() {
+    this.stop();
     this.#initRegisters();
+
+    for (let i = 0; i < MEMORY_SIZE; i++) {
+      this.#memory[i] = 0;
+    }
   }
 
   /* Stops the execution of the current program */
   stop() {
-    if (this.#program === null) {
+    if (!this.#running) {
       return;
     }
+
+    clearInterval(this.#runID);
+    this.#runID = -1;
+
+    this.#running = false;
   }
 
   /* Sets the register @r to the 8-bit value @to */
@@ -68,13 +101,23 @@ class FrameVM {
   }
 
   /* Sets the stack pointer to the 8-bit value @to */
-  setStackPointer(to) {
-    this.#stackPointer = to;
+  setSP(to) {
+    this.#sp = to;
   }
 
   /* Returns the contents of the stack pointer */
-  getStackPointer() {
-    return this.#stackPointer;
+  getSP() {
+    return this.#sp;
+  }
+
+  /* Sets the program counter to the 8-bit value @to */
+  setPC(to) {
+    this.#pc = to;
+  }
+
+  /* Returns the contents of the program counter */
+  getPC() {
+    return this.#pc;
   }
 
   /* Initializes the HTML canvas */
@@ -96,6 +139,14 @@ class FrameVM {
     for (let r = 0; r < 8; r++) {
       this.setRegister(r, 0);
     }
+
+    this.setSP(0);
+    this.setPC(0);
+  }
+
+  /* Initializes the VM memory */
+  #initMemory() {
+    this.#memory = new Uint32Array(MEMORY_SIZE);
   }
 }
 
@@ -103,4 +154,8 @@ const frameVM = new FrameVM();
 
 const runProgram = (program) => {
   frameVM.loadProgramAndRun(program);
+};
+
+const stopProgram = () => {
+  frameVM.stop();
 };

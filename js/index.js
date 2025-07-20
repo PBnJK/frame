@@ -5,12 +5,17 @@
 const init = () => {
   const editorCodeEditor = document.getElementById("editor-code-editor");
   const editorRunButton = document.getElementById("editor-run-button");
+  const editorStopButton = document.getElementById("editor-stop-button");
 
-  editorRunButton.addEventListener("click", (ev) => {
+  editorRunButton.addEventListener("click", () => {
     const sourceProgram = editorCodeEditor.value;
 
     const assembledProgram = assemble(sourceProgram);
     runProgram(assembledProgram);
+  });
+
+  editorStopButton.addEventListener("click", () => {
+    stopProgram();
   });
 };
 
