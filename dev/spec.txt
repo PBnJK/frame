@@ -1,4 +1,15 @@
 The FRAME spec
 
+Visual
 - Resolution: 64x64
 - Colors: 8
+
+Architecture
+- Memory: 16-bit (0x0000-0xFFFF)
+- Registers: 8
+
+Memory Mapping
+- 0x0000-0xEFFF: program memory
+
+Instruction Set
+- MOV [v], [r]: Moves value [v] into [r]

@@ -6,6 +6,9 @@
     <title>Frame</title>
     <link href="css/index.css" rel="stylesheet" />
 
+    <script src="js/index.js" defer></script>
+
+    <script src="js/assembler.js" defer></script>
     <script src="js/runner.js" defer></script>
   </head>
   <body>
@@ -13,12 +16,14 @@
       <div id="editor-code">
         <h2 class="zone-title" id="editor-code-title">Code Editor</h2>
         <textarea
-          id="editor-code-textarea"
-          name="editor-code-textarea"
+          id="editor-code-editor"
+          name="editor-code-editor"
           rows="40"
           cols="40"
         ></textarea>
       </div>
+
+      <button id="editor-run-button" type="">Run</button>
     </div>
     <div id="runner">
       <h2 class="zone-title" id="runner-title">Runner</h2>
