@@ -1,7 +1,74 @@
-.zone-title {
+#container {
+  display: flex;
+  gap: 32px;
+}
+
+.region-container {
+  display: flex;
+  flex-direction: column;
+
+  border: 2px solid;
+  padding: 16px;
+
+  gap: 8px;
+
+  width: 640px;
+  height: 704px;
+}
+
+.region-title {
   margin-bottom: 8px;
+}
+
+#editor {
+}
+
+#editor-code {
+}
+
+#editor-code-title {
 }
 
 #editor-code-editor {
   resize: none;
+}
+
+#runner {
+}
+
+#runner-title {
+}
+
+#runner-container {
+}
+
+#runner-controls {
+}
+
+#runner-canvas {
+}
+
+#analyser {
+}
+
+#analyser-title {
+}
+
+#analyser-container {
+}
+
+#analyser-register-container {
+  display: grid;
+  grid-template-columns: repeat(2, 128px);
+}
+
+#analyser-flags-container {
+  display: flex;
+  gap: 8px;
+}
+
+.analyser-field {
+  margin: 0;
+
+  font: monospace;
 }

@@ -2,12 +2,14 @@
  * Main engine script
  */
 
+"use strict";
+
 const init = () => {
   const editorCodeEditor = document.getElementById("editor-code-editor");
-  const editorRunButton = document.getElementById("editor-run-button");
-  const editorStopButton = document.getElementById("editor-stop-button");
+  const runnerRunButton = document.getElementById("runner-run-button");
+  const runnerStopButton = document.getElementById("runner-stop-button");
 
-  editorRunButton.addEventListener("click", () => {
+  runnerRunButton.addEventListener("click", () => {
     const sourceProgram = editorCodeEditor.value;
 
     const assembledProgram = assemble(sourceProgram);
@@ -16,7 +18,7 @@ const init = () => {
     }
   });
 
-  editorStopButton.addEventListener("click", () => {
+  runnerStopButton.addEventListener("click", () => {
     stopProgram();
   });
 };

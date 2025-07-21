@@ -2,14 +2,14 @@
 
 ## Visual
 - Resolution: 64x64
-- Colors: 8
+- Colors: 16
 
 ## Architecture
-- Memory: 16-bit (0x0000-0xFFFF)
+- Memory: 16-bit (0x0100-0xdfff)
 - Registers: 4
 
 ## Memory Mapping
-- 0x0000-0xEFFF: program memory
+- 0x0100-0xec00: program memory
 
 ## Instruction Set
 ### hlt
@@ -30,11 +30,17 @@ Compares two values for equality and sets the conditional flag accordingly
 ### not <r>, <v>
 Logical negation (zero becomes one, non-zero becomes zero)
 - If no operands are given, negates the conditional flag
-- Otherwise, negates [v] and stores the result into [r]
+- Otherwise, negates <v> and stores the result into <r>
 
 ### add [r], [a], [b]
 Adds values [a] and [b] and stores the result into [r]
-[a] and [b] are treated as signed
+[a] and [b]
+
+### push [v]
+Pushes a value [v] into the stack
+
+### pop <r>
+Pops a value from the stack and (optionally) stores it into <r>
 
 ## Instruction Formats
 

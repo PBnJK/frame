@@ -30,6 +30,8 @@ const Opcode = {
   ADD: 0x6,
   CALL: 0x7,
   RET: 0x8,
+  PUSH: 0x9,
+  POP: 0xa,
 };
 
 const Mode = {
@@ -71,6 +73,8 @@ class Assembler {
     add: this.#emitADD.bind(this),
     call: this.#emitCALL.bind(this),
     ret: this.#emitRET.bind(this),
+    push: this.#emitPUSH.bind(this),
+    pop: this.#emitPOP.bind(this),
   };
 
   constructor() {}
@@ -132,16 +136,14 @@ class Assembler {
       const addr = this.#labels.get(START_POINT);
 
       const lo = addr & 0xff;
-      this.#program[START_ADDR] = lo;
+      this.#program[ROM_START_ADDR] = lo;
 
       const hi = (addr >> 8) & 0xff;
-      this.#program[START_ADDR + 1] = hi;
+      this.#program[ROM_START_ADDR + 1] = hi;
     } else {
-      this.#program[START_ADDR] = 0;
-      this.#program[START_ADDR + 1] = 0;
+      this.#program[ROM_START_ADDR] = 0;
+      this.#program[ROM_START_ADDR + 1] = 0;
     }
-
-    console.log(this.#program);
   }
 
   #logError(token) {
@@ -304,6 +306,10 @@ class Assembler {
   /* Assembles a register */
   #assembleRegister() {
     const num = this.#advance();
+    if (num === "s") {
+      return this.#createToken(TokenType.REGISTER, SP);
+    }
+
     if (!this.#isDigit(num)) {
       return this.#createError(`expected register number, got "${num}"`);
     }
@@ -411,6 +417,8 @@ class Assembler {
   #emitDirective(token) {
     const directives = {
       ".addr": this.#emitDirectiveAddr.bind(this),
+      ".byte": this.#emitDirectiveByte.bind(this),
+      ".word": this.#emitDirectiveWord.bind(this),
     };
 
     const directive = directives[token.lexeme];
@@ -423,7 +431,7 @@ class Assembler {
 
   /* Emits a .addr directive */
   #emitDirectiveAddr() {
-    const [addr, err] = this.#getDirectiveNumberArg();
+    const [addr, err] = this.#getDirectiveArg();
     if (err) {
       return err;
     }
@@ -431,17 +439,51 @@ class Assembler {
     this.#pos = addr;
   }
 
+  /* Emits a .byte directive */
+  #emitDirectiveByte() {
+    while (true) {
+      const [byte, err] = this.#getDirectiveArg();
+      if (err) {
+        break;
+      }
+
+      this.#emit(byte);
+    }
+  }
+
+  /* Emits a .word directive */
+  #emitDirectiveWord() {
+    while (true) {
+      const [word, err] = this.#getDirectiveArg();
+      if (err) {
+        break;
+      }
+
+      const lo = word & 0xff;
+      const hi = (word >> 8) & 0xff;
+
+      this.#emit(lo);
+      this.#emit(hi);
+    }
+  }
+
   /* (Attempts to) retrieve a number argument for a directive */
-  #getDirectiveNumberArg() {
-    const arg = this.#assembleToken();
-    if (arg.type !== TokenType.NUMBER) {
+  #getDirectiveArg() {
+    const arg = this.#getArgument();
+    if (arg === null) {
+      const msg = `couldn't retrieve next argument`;
+      return [null, this.#createError(msg)];
+    }
+
+    const value = this.#getValueFromArgument(arg);
+    if (value === null) {
       const asString = this.#getTypeAsString(arg.type);
-      const msg = `expected a number, but got ${asString}`;
+      const msg = `expected an argument, but got ${asString}`;
 
       return [null, this.#createError(msg)];
     }
 
-    return [parseInt(arg.lexeme, 10), null];
+    return [value, null];
   }
 
   /* Emits a HLT instruction */
@@ -456,12 +498,12 @@ class Assembler {
 
   /* Emits a JMP instruction */
   #emitJMP() {
-    return this.#emitInstructionBytes(Opcode.JMP, [Mode.K]);
+    return this.#emitInstructionBytes(Opcode.JMP, [Mode.K], true);
   }
 
   /* Emits a JMPC instruction */
   #emitJMPC() {
-    return this.#emitInstructionBytes(Opcode.JMPC, [Mode.K]);
+    return this.#emitInstructionBytes(Opcode.JMPC, [Mode.K], true);
   }
 
   /* Emits an EQU instruction */
@@ -487,6 +529,16 @@ class Assembler {
   /* Emits a RET instruction */
   #emitRET() {
     return this.#emitInstructionBytes(Opcode.RET);
+  }
+
+  /* Emits a PUSH instruction */
+  #emitPUSH() {
+    return this.#emitInstructionBytes(Opcode.PUSH, [Mode.A, Mode.K]);
+  }
+
+  /* Emits a POP instruction */
+  #emitPOP() {
+    return this.#emitInstructionBytes(Opcode.POP, [Mode.O, Mode.A]);
   }
 
   /* Parses and emits an instruction as bytes */
@@ -665,13 +717,18 @@ class Assembler {
 
   /* Returns the values of arguments */
   #getValuesFromArguments(args) {
-    return args.map((arg) => {
-      switch (arg.type) {
-        case TokenType.NUMBER:
-        case TokenType.REGISTER:
-          return arg.lexeme;
-      }
-    });
+    return args.map(this.#getValueFromArgument);
+  }
+
+  /* Returns the value of an argument */
+  #getValueFromArgument(arg) {
+    switch (arg.type) {
+      case TokenType.NUMBER:
+      case TokenType.REGISTER:
+        return arg.lexeme;
+    }
+
+    return null;
   }
 
   /* Emits O op */
