@@ -58,13 +58,20 @@
 }
 
 #analyser-register-container {
-  display: grid;
-  grid-template-columns: repeat(2, 128px);
+  display: flex;
+  flex-direction: column;
 }
 
 #analyser-flags-container {
   display: flex;
   gap: 8px;
+}
+
+.analyser-sub-container {
+  display: flex;
+  flex-direction: row;
+
+  gap: 16px;
 }
 
 .analyser-field {

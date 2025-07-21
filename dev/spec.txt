@@ -5,76 +5,186 @@
 - Colors: 16
 
 ## Architecture
-- Memory: 16-bit (0x0100-0xdfff)
-- Registers: 4
+- Memory: 16-bit (0x0000-0xffff)
+- Registers: 16
 
 ## Memory Mapping
-- 0x0100-0xec00: program memory
+- 0x0000-0x00ff: Stack
+- 0x0100-0xdfff: Program memory
+- 0xe000-0xe7bf: Kernel
+- 0xe7c0-0xe7ff: Text Mode data
+- 0xe800-0xec00: Font data
+- 0xec00-0xefff: Screen data
 
 ## Instruction Set
 ### hlt
 Halts execution
+- hlt: Halts execution
 
-### mov [r], [v]
-Moves value [v] into [r]
+### mov
+Moves a value from one place to another
+- mov [a], [%], [b]: Moves the value in address ([%] + the value in register [b])
+                     into register [a]
+- mov [a], [%], [k]: Moves the value in address ([%] + value [k]) into register [a]
+- mov [%], [a], [b]: Moves the value in register [b] into address ([%] + the value
+                     in register [a])
+- mov [%], [a], [k]: Moves value [k] into address ([%] + the value in register [a])
+- mov [a], [b]:      Moves the value in register [b] into register [a]
+- mov [a], [k]:      Moves value [k] into register [a]
+- mov [a], [%]:      Moves the value in address [%] into register [a]
+- mov [%], [a]:      Moves the value in register [a] into address [%]
+- mov [%], [k]:      Moves value [k] into address [%]
 
-### jmp [a]
-Unconditional jump to address [a]
+### jmp
+Performs an unconditional jump
+- jmp [%], [a]: Jumps to address ([%] + the value in register [a])
+- jmp [%], [k]: Jumps to address ([%] + value [k])
+- jmp [%]:      Jumps to address [%]
 
-### jmpc [a]
-Jumps to address [a] if the conditional flag is non-zero
+### jmpt
+Performs a conditional jump if the conditional flag is non-zero (true)
+- jmpt [%], [a]: Jumps to address ([%] + the value in register [a])
+- jmpt [%], [k]: Jumps to address ([%] + value [k])
+- jmpt [%]:      Jumps to address [%]
 
-### equ [a], [b]
+### jmpf
+Performs a conditional jump if the conditional flag is zero (false)
+- jmpf [%], [a]: Jumps to address ([%] + the value in register [a])
+- jmpf [%], [k]: Jumps to address ([%] + value [k])
+- jmpf [%]:      Jumps to address [%]
+
+### equ
 Compares two values for equality and sets the conditional flag accordingly
+- equ [a], [b]: Compares the value in register [a] with the value in register [b]
+- equ [a], [k]: Compares the value in register [a] with value [k]
 
-### not <r>, <v>
-Logical negation (zero becomes one, non-zero becomes zero)
-- If no operands are given, negates the conditional flag
-- Otherwise, negates <v> and stores the result into <r>
+### lss
+Checks if one value is less than the other and sets the conditional flag accordingly
+- lss [a], [b]: Compares the value in register [a] with the value in register [b]
+- lss [a], [k]: Compares the value in register [a] with value [k]
 
-### add [r], [a], [b]
-Adds values [a] and [b] and stores the result into [r]
-[a] and [b]
+### and
+ANDs (a & b) two values together
+- and [a], [b], [c]: ANDs the value in register [b] with the value in register [c]
+                     and stores the result in register [a]
+- and [a], [b], [k]: ANDs the value in register [b] with value [k], and stores the
+                     result in register [a]
+- and [a], [b]:      ANDs the register [a] in-place with the value in register [b]
+- and [a], [k]:      ANDs the register [a] in-place with value in [k]
 
-### push [v]
-Pushes a value [v] into the stack
+### or
+ORs (a | b) two values together
+- or [a], [b], [c]: ORs the value in register [b] with the value in register [c]
+                    and stores the result in register [a]
+- or [a], [b], [k]: ORs the value in register [b] with value [k], and stores the
+                    result in register [a]
+- or [a], [b]:      ORs the register [a] in-place with the value in register [b]
+- or [a], [k]:      ORs the register [a] in-place with value in [k]
 
-### pop <r>
-Pops a value from the stack and (optionally) stores it into <r>
+### not
+Negates (!a) a value, so that zero becomes one, and non-zero values become zero
+- not [a], [b]: Negates the value in register [b] and stores the result in
+                register [a]
+- not [a], [k]: Negates value [k] and stores the result in register [a]
+- not [a]:      Negates the conditional flag and stores the result in register [a]
+- not:          Negates the conditional flag
+
+### add
+Adds two values
+- add [a], [b], [c]: Sums the value in register [b] with the value in register [c]
+                     and stores the result in register [a]
+- add [a], [b], [k]: Sums the value in register [b] with value [k] and stores the
+                     result in register [a]
+- add [a], [b]:      Sums the register [a] in-place with the value in register [b]
+- add [a], [k]:      Sums the register [a] in-place with value [k]
+
+### inc
+Increments a value by one
+- inc [a]: Increments the value in register [a] in-place
+- inc [%]: Increments the value at address [%] in-place
+
+### dec
+Decrements a value by one
+- dec [a]: Decrements the value in register [a] in-place
+- dec [%]: Decrements the value at address [%] in-place
+
+### call
+Calls a subroutine
+- call [%]: Calls the subroutine at address [%]
+
+### ret
+Returns from a subroutine
+- ret: Returns from a subroutine
+
+### push
+Pushes a value to the stack
+- push [a]: Pushes the value in register [a] to the stack
+- push [k]: Pushes value [k] to the stack
+
+### pop
+Pops a value from the stack
+- pop [a] Pops a value from the stack and stores it in register [a]
+- pop:    Pops a value from the stack
+
+### sei
+Sets the value of the interrupt flag
+- sei [a]: Sets the interrupt flag to the value in register [a]
+- sei [k]: Sets the interrupt flag to value [k]
+- sei:     Sets the interrupt flag to non-zero
 
 ## Instruction Formats
 
 ### O
-15 14 13 12 11 10 09 08|07 06 05|04 03 02 01 00
------------------------|mode    |opcode
+|7 6 5 4 3 2 1 0|
+|opcode         |
 
 ### A
-15 14 13 12 11|10 09 08|07 06 05|04 03 02 01 00
---------------|reg. A  |mode    |opcode
+|7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0|
+|-------|A      | |opcode         |
 
 ### K
-15 14 13 12 11 10 09 08|07 06 05|04 03 02 01 00
-constant               |mode    |opcode
+|7 6 5 4 3 2 1 0| |7 6 5 4 3 2 1 0|
+|constant       | |opcode         |
+
+### P
+|7 6 5 4 3 2 1 0| |7 6 5 4 3 2 1 0| |7 6 5 4 3 2 1 0|
+|address (hi)   | |address (lo)   | |opcode         |
 
 ### AB
-15 14|13 12 11|10 09 08|07 06 05|04 03 02 01 00
------|reg. B  |reg. A  |mode    |opcode
+|7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0|
+|B      |A      | |opcode         |
 
 ### AK
-18 17 16 15 14 13 12 11|10 09 08|07 06 05|04 03 02 01 00
-constant               |reg. A  |mode    |opcode
+|7 6 5 4 3 2 1 0| |7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0|
+|constant       | |-------|A      | |opcode         |
 
-### KK (technically just K)
-23 22 21 20 19 18 17 16 15 14 13 12 11 10 09 08|07 06 05|04 03 02 01 00
-long constant                                  |mode    |opcode
+### AP
+|7 6 5 4 3 2 1 0| |7 6 5 4 3 2 1 0| |7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0|
+|address (hi)   | |address (lo)   | |-------|A      | |opcode         |
+
+### PA
+|7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0| |7 6 5 4 3 2 1 0| |7 6 5 4 3 2 1 0|
+|-------|A      | |address (hi)   | |address (lo)   | |opcode         |
+
+### PK
+|7 6 5 4 3 2 1 0| |7 6 5 4 3 2 1 0| |7 6 5 4 3 2 1 0| |7 6 5 4 3 2 1 0|
+|constant       | |address (hi)   | |address (lo)   | |opcode         |
 
 ### ABC
-16 15 14|13 12 11|10 09 08|07 06 05|04 03 02 01 00
-reg. C  |reg. B  |reg. A  |mode    |opcode
+|7 6 5 4|3 2 1 0| |7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0|
+|-------|C      | |B      |A      | |opcode         |
 
 ### ABK
-21 20 19 18 17 16 15 14|13 12 11|10 09 08|07 06 05|04 03 02 01 00
-constant               |reg. B  |reg. A  |mode    |opcode
+|7 6 5 4 3 2 1 0| |7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0|
+|constant       | |B      |A      | |opcode         |
+
+### APB/PAB
+|7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0| |7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0|
+|B      |A      | |address (hi)   | |address (lo)   | |opcode         |
+
+### APK/PAK
+|7 6 5 4 3 2 1 0| |7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0| |7 6 5 4|3 2 1 0| |7 6 5 4 3 2 1 0|
+|constant       | |-------|A      | |address (hi)   | |address (lo)   | |opcode         |
 
 ## Assembler
 - Instructions: mov, add, sub, etc.

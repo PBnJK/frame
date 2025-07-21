@@ -13,22 +13,72 @@ const FRAME_CANVAS_H = FRAME_WIN_H * FRAME_CANVAS_SCALE;
 
 const MEMORY_SIZE = 0xffff + 1;
 
-const RUN_INTERVAL = 100;
+const RUN_INTERVAL = 0;
+
+const KERNEL_START_ADDR = 0xe000;
+const TXT_CURSOR_POS = 0xe7bf;
+const TXT_DATA_ADDR = 0xe7c0;
+const FONT_START_ADDR = 0xe800;
+const SCREEN_DATA_ADDR = 0xec00;
 
 const INT_START_ADDR = 0xfffc;
 const ROM_START_ADDR = 0xfffe;
 
-const DISPLAY_MODE = 0xe3ff;
-
-const TXT_START_ADDR = 0xe800;
-const SCREEN_DATA_ADDR = 0xec00;
-
 const INSTRUCTIONS_PER_INTERRUPT = 100;
 
-const SP = 8;
+const REG_COUNT = 16;
+const SP = REG_COUNT + 1;
+
+/* Kernel assembly code
+ * TODO:
+ * - Pre-compile and load as file
+ */
+const KERNEL_SRC = `# The FRAME Kernel
+# pedrob
+
+.addr 0xe000
+
+# == TEXT MODE ==
+
+# Clears the screen, leaving the cursor at the top-left
+# Uses registers $8, $15
+@ktxt_clear
+  sei $0              # Critical section (no interrupts)
+  mov %e7bf, $0       # Set the cursor to the top-left
+  mov $8, ' '         # Load $8 with the space character
+  @_loop
+    call @ktxt_putch  # Draw the character
+    equ $15, $0       # Has cursor looped back to start?
+    jmpf @_loop       # If it hasn't, loop back
+  ret
+
+# Prints a null-terminated string to the screen
+# $8 : LSB of the text address
+# $9 : MSB of the text address
+#
+# Uses register $15
+@ktxt_print
+  sei $0              # Critical section (no interrupts)
+  mov $15, $0
+  @_loop
+  ret
+
+# Prints a character to the screen, advancing the cursor
+# $8 : ASCII character the be printed
+#
+# Uses register $15
+@ktxt_putch
+  sei $0             # Critical section (no interrupts)
+  mov $15, %e7bf     # Load cursor position
+  mov %e7c0, $15, $8 # Put the character on the buffer
+  inc $15            # Advance the cursor
+  and $15, 0b111111  # Mask the cursor so it wraps around
+  mov %e7bf, $15     # Save the cursor position
+  ret
+`;
 
 // prettier-ignore
-const TXT_DATA = [
+const FONT_DATA = [
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* NUL */
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* SOH */
   0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, /* STX */
@@ -171,6 +221,14 @@ const analyserRegisters = [
   document.getElementById("analyser-r5"),
   document.getElementById("analyser-r6"),
   document.getElementById("analyser-r7"),
+  document.getElementById("analyser-r8"),
+  document.getElementById("analyser-r9"),
+  document.getElementById("analyser-r10"),
+  document.getElementById("analyser-r11"),
+  document.getElementById("analyser-r12"),
+  document.getElementById("analyser-r13"),
+  document.getElementById("analyser-r14"),
+  document.getElementById("analyser-r15"),
 ];
 
 const analyserFlagConditional = document.getElementById("analyser-flag-cond");
@@ -207,14 +265,17 @@ class FrameVM {
 
   #instructions;
 
+  #kernelInfo;
+
   constructor() {
     this.#initCanvas();
+    this.#initRegisters();
     this.#initMemory();
     this.#initFlags();
-    this.#initFont();
     this.#initInstructions();
+    this.#initKernel();
+    this.#initFont();
 
-    this.#registers = {};
     this.reset();
   }
 
@@ -228,9 +289,18 @@ class FrameVM {
   loadProgram(program) {
     this.stop();
     this.reset();
-    for (let i = 0; i < MEMORY_SIZE; i++) {
-      this.setMemory(i, program[i]);
+
+    const code = program.program;
+    const main = program.main;
+
+    for (let i = 0; i < KERNEL_START_ADDR; i++) {
+      this.setMemory(i, code[i]);
     }
+
+    /* Setup reset vector */
+    const lo = main & 0xff;
+    const hi = (main >> 8) & 0xff;
+    this.setMemory16(ROM_START_ADDR, lo, hi);
   }
 
   /* Runs the VM */
@@ -246,16 +316,15 @@ class FrameVM {
   /* Executes a single instruction */
   runCallback() {
     if (this.#needsInterrupt) {
+      this.#draw();
       this.#triggerInterrupt();
     }
 
     this.#updateAnalyser();
 
     const instruction = this.fetchNext();
-    const [opcode, mode] = this.#parseInstruction(instruction);
-
-    const callback = this.#instructions[opcode];
-    callback(mode);
+    const callback = this.#instructions[instruction];
+    callback();
   }
 
   /* Fetches the next byte */
@@ -264,7 +333,10 @@ class FrameVM {
     this.#pc &= 0xffff;
 
     this.#clock++;
-    if (this.#clock % INSTRUCTIONS_PER_INTERRUPT === 0) {
+    if (
+      this.#clock % INSTRUCTIONS_PER_INTERRUPT === 0 &&
+      this.getFlag(Flag.INTERRUPT)
+    ) {
       this.#needsInterrupt = true;
     }
 
@@ -274,14 +346,20 @@ class FrameVM {
   /* Resets the VM */
   reset() {
     this.stop();
-    this.#initRegisters();
 
     this.#clock = 0;
     this.#needsInterrupt = false;
 
-    for (let i = 0; i < MEMORY_SIZE; i++) {
+    for (let i = 0; i < KERNEL_START_ADDR; i++) {
       this.#memory[i] = 0;
     }
+
+    for (let i = 0; i < REG_COUNT; i++) {
+      this.setRegister(i, 0);
+    }
+
+    this.setPC(0);
+    this.setSP(0);
   }
 
   /* Stops the execution of the current program */
@@ -305,8 +383,8 @@ class FrameVM {
 
   /* Sets a 16-bit value in memory */
   setMemory16(addr, lo, hi) {
-    this.#memory[addr++] = hi;
-    this.#memory[addr] = lo;
+    this.setMemory(addr++, lo);
+    this.setMemory(addr, hi);
   }
 
   /* Gets a value from memory */
@@ -316,13 +394,17 @@ class FrameVM {
 
   /* Gets a 16-bit value from memory */
   getMemory16(addr) {
-    const hi = this.#memory[addr++];
-    const lo = this.#memory[addr];
-    return hi | (lo << 8);
+    const lo = this.getMemory(addr++);
+    const hi = this.getMemory(addr);
+    return lo | (hi << 8);
   }
 
   /* Sets the register @r to the 8-bit value @to */
   setRegister(r, to) {
+    if (r === 0) {
+      to = 0;
+    }
+
     this.#registers[r] = to & 0xff;
   }
 
@@ -364,7 +446,9 @@ class FrameVM {
   /* Pushes a value to the stack */
   pushToStack(value) {
     this.setMemory(this.getSP(), value);
-    ++this.#registers[SP];
+
+    const sp = this.getRegister(SP);
+    this.setRegister(SP, sp + 1);
   }
 
   /* Pushes a 16-bit value to the stack */
@@ -372,22 +456,29 @@ class FrameVM {
     const lo = value & 0xff;
     const hi = (value >> 8) & 0xff;
 
-    this.pushToStack(lo);
     this.pushToStack(hi);
+    this.pushToStack(lo);
   }
 
   /* Pops a value from the stack */
   popFromStack() {
-    --this.#registers[SP];
+    const sp = this.getRegister(SP);
+    this.setRegister(SP, sp - 1);
+
     return this.getMemory(this.getSP());
   }
 
   /* Pops a 16-bit value from the stack */
   popFromStack16() {
-    const hi = this.popFromStack();
     const lo = this.popFromStack();
+    const hi = this.popFromStack();
 
     return lo | (hi << 8);
+  }
+
+  /* Gets kernel compilation info */
+  getKernelInfo() {
+    return this.#kernelInfo;
   }
 
   /* Initializes the HTML canvas */
@@ -406,7 +497,8 @@ class FrameVM {
 
   /* Initializes the VM registers */
   #initRegisters() {
-    for (let r = 0; r < 8; r++) {
+    this.#registers = {};
+    for (let r = 0; r < REG_COUNT; r++) {
       this.setRegister(r, 0);
     }
 
@@ -428,117 +520,344 @@ class FrameVM {
     this.setFlag(Flag.INTERRUPT, 1);
   }
 
+  /* Initializes the kernel */
+  #initKernel() {
+    const [kernel, kernelInfo] = assembleWithInfo(KERNEL_SRC);
+    if (kernel === null) {
+      throw new Error("failed to initialize kernel");
+    }
+
+    const code = kernel.program;
+    for (let i = 0; i < MEMORY_SIZE; i++) {
+      this.#memory[i] = code[i];
+    }
+
+    this.#kernelInfo = kernelInfo;
+  }
+
   /* Initializes the font data */
   #initFont() {
-    for (let i = 0; i < TXT_DATA.length; i++) {
-      this.setMemory(TXT_START_ADDR + i, TXT_DATA[i]);
+    for (let i = 0; i < FONT_DATA.length; i++) {
+      this.setMemory(FONT_START_ADDR + i, FONT_DATA[i]);
     }
   }
 
   /* Initializes the instruction callbacks */
   #initInstructions() {
     this.#instructions = {
-      [Opcode.HLT]: () => {
+      [Opcode.HLT_O]: () => {
         this.stop();
       },
-      [Opcode.MOV]: (mode) => {
-        if (mode === Mode.AB) {
-          const [a, b] = this.#getArgsAB();
-          this.setRegister(a, this.getRegister(b));
-        } else {
-          const [a, k] = this.#getArgsAK();
-          this.setRegister(a, k);
-        }
+      [Opcode.MOV_APB]: () => {
+        const [a, p, b] = this.#getArgsAPB();
+        const B = this.getRegister(b);
+        const P = this.getMemory(p + B);
+
+        this.setRegister(a, P);
       },
-      [Opcode.JMP]: (_) => {
-        const kk = this.#getArgsKK();
-        this.setPC(kk);
+      [Opcode.MOV_APK]: () => {
+        const [a, p, k] = this.#getArgsAPK();
+        const P = this.getMemory(p + k);
+
+        this.setRegister(a, P);
       },
-      [Opcode.JMPC]: (_) => {
+      [Opcode.MOV_PAB]: () => {
+        const [p, a, b] = this.#getArgsPAB();
+        const A = this.getRegister(a);
+        const B = this.getRegister(b);
+
+        this.setMemory(p + A, B);
+      },
+      [Opcode.MOV_PAK]: () => {
+        const [p, a, k] = this.#getArgsPAK();
+        const A = this.getRegister(a);
+
+        this.setMemory(p + A, k);
+      },
+      [Opcode.MOV_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const B = this.getRegister(b);
+
+        this.setRegister(a, B);
+      },
+      [Opcode.MOV_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        this.setRegister(a, k);
+      },
+      [Opcode.MOV_AP]: () => {
+        const [a, p] = this.#getArgsAP();
+        const P = this.getMemory(p);
+
+        this.setRegister(a, P);
+      },
+      [Opcode.MOV_PA]: () => {
+        const [p, a] = this.#getArgsPA();
+        const A = this.getRegister(a);
+
+        this.setMemory(p, A);
+      },
+      [Opcode.MOV_PK]: () => {
+        const [p, k] = this.#getArgsAK();
+
+        console.log("MOV_PK", this.getPC(), p, k);
+        this.setMemory(p, k);
+      },
+      [Opcode.JMP_PA]: () => {
+        const [p, a] = this.#getArgsPA();
+        const P = p + a;
+
+        this.setPC(P);
+      },
+      [Opcode.JMP_PK]: () => {
+        const [p, k] = this.#getArgsPK();
+        const P = p + k;
+
+        this.setPC(P);
+      },
+      [Opcode.JMP_P]: () => {
+        const p = this.#getArgsP();
+        this.setPC(p);
+      },
+      [Opcode.JMPT_PA]: () => {
+        const [p, a] = this.#getArgsPA();
         if (this.getFlag(Flag.CONDITIONAL) !== 0) {
-          const kk = this.#getArgsKK();
-          this.setPC(kk);
+          const P = p + a;
+          this.setPC(P);
         }
       },
-      [Opcode.EQU]: (mode) => {
-        if (mode === Mode.AB) {
-          const [a, b] = this.#getArgsAB();
-          const eq = this.getRegister(a) === this.getRegister(b) ? 1 : 0;
-          this.setFlag(Flag.CONDITIONAL, eq);
-        } else {
-          const [a, k] = this.#getArgsAK();
-          const eq = this.getRegister(a) === k ? 1 : 0;
-          this.setFlag(Flag.CONDITIONAL, eq);
+      [Opcode.JMPT_PK]: () => {
+        const [p, k] = this.#getArgsPK();
+        if (this.getFlag(Flag.CONDITIONAL) !== 0) {
+          const P = p + k;
+          this.setPC(P);
         }
       },
-      [Opcode.NOT]: (mode) => {
-        switch (mode) {
-          case Mode.O: {
-            const c = this.getFlag(Flag.CONDITIONAL);
-            this.setFlag(Flag.CONDITIONAL, c === 0 ? 1 : 0);
-            break;
-          }
-          case Mode.AB: {
-            const [a, b] = this.#getArgsAB();
-            const c = this.getRegister(b) === 0 ? 1 : 0;
-            this.setRegister(a, c);
-            break;
-          }
-          case Mode.AK: {
-            const [a, k] = this.#getArgsAK();
-            const c = k === 0 ? 1 : 0;
-            this.setRegister(a, c);
-            break;
-          }
+      [Opcode.JMPT_P]: () => {
+        const p = this.#getArgsP();
+        if (this.getFlag(Flag.CONDITIONAL) !== 0) {
+          this.setPC(p);
         }
       },
-      [Opcode.ADD]: (mode) => {
-        if (mode === Mode.ABC) {
-          const [a, b, c] = this.#getArgsABC();
-          const result = this.#addWithCarry(
-            this.getRegister(b),
-            this.getRegister(c),
-          );
-          this.setRegister(a, result);
-        } else {
-          const [a, b, k] = this.#getArgsABK();
-          const result = this.#addWithCarry(this.getRegister(b), k);
-          this.setRegister(a, result);
+      [Opcode.JMPF_PA]: () => {
+        const [p, a] = this.#getArgsPA();
+        if (this.getFlag(Flag.CONDITIONAL) === 0) {
+          const P = p + a;
+          this.setPC(P);
         }
       },
-      [Opcode.CALL]: () => {
+      [Opcode.JMPF_PK]: () => {
+        const [p, k] = this.#getArgsPK();
+        if (this.getFlag(Flag.CONDITIONAL) === 0) {
+          const P = p + k;
+          this.setPC(P);
+        }
+      },
+      [Opcode.JMPF_P]: () => {
+        const p = this.#getArgsP();
+        if (this.getFlag(Flag.CONDITIONAL) === 0) {
+          this.setPC(p);
+        }
+      },
+      [Opcode.EQU_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const eq = this.getRegister(a) === this.getRegister(b) ? 1 : 0;
+        this.setFlag(Flag.CONDITIONAL, eq);
+      },
+      [Opcode.EQU_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        const eq = this.getRegister(a) === k ? 1 : 0;
+        this.setFlag(Flag.CONDITIONAL, eq);
+      },
+      [Opcode.LSS_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const lss = this.getRegister(a) < this.getRegister(b) ? 1 : 0;
+        this.setFlag(Flag.CONDITIONAL, lss);
+      },
+      [Opcode.LSS_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        const lss = this.getRegister(a) < k ? 1 : 0;
+        this.setFlag(Flag.CONDITIONAL, lss);
+      },
+      [Opcode.AND_ABC]: () => {
+        const [a, b, c] = this.#getArgsABC();
+        const B = this.getRegister(b);
+        const C = this.getRegister(c);
+
+        const AND = B & C;
+        this.setRegister(a, AND);
+      },
+      [Opcode.AND_ABK]: () => {
+        const [a, b, k] = this.#getArgsABK();
+        const B = this.getRegister(b);
+
+        const AND = B & k;
+        this.setRegister(a, AND);
+      },
+      [Opcode.AND_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const A = this.getRegister(a);
+        const B = this.getRegister(b);
+
+        const AND = A & B;
+        this.setRegister(a, AND);
+      },
+      [Opcode.AND_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        const A = this.getRegister(a);
+
+        const AND = A & k;
+        this.setRegister(a, AND);
+      },
+      [Opcode.OR_ABC]: () => {
+        const [a, b, c] = this.#getArgsABC();
+        const B = this.getRegister(b);
+        const C = this.getRegister(c);
+
+        const OR = B | C;
+        this.setRegister(a, OR);
+      },
+      [Opcode.OR_ABK]: () => {
+        const [a, b, k] = this.#getArgsABK();
+        const B = this.getRegister(b);
+
+        const OR = B | k;
+        this.setRegister(a, OR);
+      },
+      [Opcode.OR_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const A = this.getRegister(a);
+        const B = this.getRegister(b);
+
+        const OR = A | B;
+        this.setRegister(a, OR);
+      },
+      [Opcode.OR_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        const A = this.getRegister(a);
+
+        const OR = A | k;
+        this.setRegister(a, OR);
+      },
+      [Opcode.NOT_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const B = this.getRegister(b);
+
+        this.getRegister(a, B === 0 ? 1 : 0);
+      },
+      [Opcode.NOT_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        this.getRegister(a, k === 0 ? 1 : 0);
+      },
+      [Opcode.NOT_A]: () => {
+        const a = this.#getArgsA();
+        const C = this.getFlag(Flag.CONDITIONAL) === 0 ? 1 : 0;
+
+        this.setFlag(Flag.CONDITIONAL, C);
+        this.setRegister(a, C);
+      },
+      [Opcode.NOT_O]: () => {
+        const C = this.getFlag(Flag.CONDITIONAL) === 0 ? 1 : 0;
+        this.setFlag(Flag.CONDITIONAL, C);
+      },
+      [Opcode.ADD_ABC]: () => {
+        const [a, b, c] = this.#getArgsABC();
+        const B = this.getRegister(b);
+        const C = this.getRegister(c);
+
+        const result = this.#addWithCarry(B, C);
+        this.setRegister(a, result);
+      },
+      [Opcode.ADD_ABK]: () => {
+        const [a, b, k] = this.#getArgsABK();
+        const B = this.getRegister(b);
+
+        const result = this.#addWithCarry(B, k);
+        this.setRegister(a, result);
+      },
+      [Opcode.ADD_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const A = this.getRegister(a);
+        const B = this.getRegister(b);
+
+        const result = this.#addWithCarry(A, B);
+        this.setRegister(a, result);
+      },
+      [Opcode.ADD_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        const A = this.getRegister(a);
+
+        const result = this.#addWithCarry(A, k);
+        this.setRegister(a, result);
+      },
+      [Opcode.INC_A]: () => {
+        const a = this.#getArgsA();
+        const A = this.getRegister(a);
+
+        this.setRegister(a, A + 1);
+      },
+      [Opcode.INC_P]: () => {
+        const p = this.#getArgsP();
+        const P = this.getMemory(p);
+
+        this.setMemory(p, P + 1);
+      },
+      [Opcode.DEC_A]: () => {
+        const a = this.#getArgsA();
+        const A = this.getRegister(a);
+
+        this.setRegister(a, A - 1);
+      },
+      [Opcode.DEC_P]: () => {
+        const p = this.#getArgsP();
+        const P = this.getMemory(p);
+
+        this.setMemory(p, P - 1);
+      },
+      [Opcode.CALL_P]: () => {
+        const p = this.#getArgsP();
+
         const pc = this.getPC();
         this.pushToStack16(pc);
 
-        const lo = pc & 0xff;
-        this.pushToStack(lo);
-
-        const hi = (pc >> 8) & 0xff;
-        this.pushToStack(hi);
-
-        const kk = this.#getArgsKK();
-        this.setPC(kk);
+        this.setPC(p);
       },
-      [Opcode.RET]: () => {
+      [Opcode.RET_O]: () => {
         const returnAddress = this.popFromStack16();
         this.setPC(returnAddress);
       },
-      [Opcode.PUSH]: (mode) => {
-        if (mode === Mode.A) {
-          const a = this.#getArgsA();
-          const value = this.getRegister(a);
-          this.pushToStack(value);
-        } else {
-          const k = this.#getArgsK();
-          this.pushToStack(k);
-        }
+      [Opcode.PUSH_A]: () => {
+        const a = this.#getArgsA();
+        const A = this.getRegister(a);
+
+        this.pushToStack(A);
       },
-      [Opcode.POP]: (mode) => {
+      [Opcode.PUSH_O]: () => {
+        const k = this.#getArgsK();
+        this.pushToStack(k);
+      },
+      [Opcode.POP_A]: () => {
         const value = this.popFromStack();
-        if (mode === Mode.A) {
-          const a = this.#getArgsA();
-          this.setRegister(a, value);
-        }
+
+        const a = this.#getArgsA();
+        this.setRegister(a, value);
+      },
+      [Opcode.POP_O]: () => {
+        this.popFromStack();
+      },
+      [Opcode.SEI_A]: () => {
+        const a = this.#getArgsA();
+        const A = this.getRegister(a) === 0 ? 0 : 1;
+
+        this.setFlag(Flag.INTERRUPT, A);
+      },
+      [Opcode.SEI_K]: () => {
+        const k = this.#getArgsK();
+        const K = k === 0 ? 0 : 1;
+
+        this.setFlag(Flag.INTERRUPT, K);
+      },
+      [Opcode.SEI_O]: () => {
+        this.setFlag(Flag.INTERRUPT, 1);
       },
     };
 
@@ -547,6 +866,7 @@ class FrameVM {
     );
   }
 
+  /* Adds two numbers, handling carry */
   #addWithCarry(a, b) {
     const result = a + b;
     if (result >= 0x100) {
@@ -560,9 +880,12 @@ class FrameVM {
 
   /* Updates the analyser with the internal state of the VM */
   #updateAnalyser() {
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < REG_COUNT; i++) {
       const p = analyserRegisters[i];
-      p.innerText = `r${i} : ${this.getRegister(i)}`;
+
+      const rV = this.getRegister(i).toString().padStart(2, "0");
+      const rN = i.toString().padStart(2, "0");
+      p.innerText = `\$${rN}: ${rV}`;
     }
 
     analyserPC.innerText = `pc : ${this.getPC()}`;
@@ -571,6 +894,55 @@ class FrameVM {
     analyserFlagConditional.innerText = `Co : ${this.getFlag(Flag.CONDITIONAL)}`;
     analyserFlagCarry.innerText = `Ca : ${this.getFlag(Flag.CARRY)}`;
     analyserFlagInterrupt.innerText = `In : ${this.getFlag(Flag.INTERRUPT)}`;
+  }
+
+  /* Draws to the screen
+   * TODO:
+   * - Draw modes
+   * - Rewrite in assembly
+   * - DO changes you are thinking about. Yeah, those
+   */
+  #draw() {
+    let x = 0;
+    let y = 0;
+
+    for (let i = TXT_DATA_ADDR; i < TXT_DATA_ADDR + 0x40; i++) {
+      const letter = this.getMemory(i);
+      const letterDataAddr = FONT_START_ADDR + letter * 8;
+
+      let oy = 0;
+      for (let j = letterDataAddr; j < letterDataAddr + 8; j++) {
+        const byte = this.getMemory(j);
+
+        let ox = 0;
+        for (let k = 7; k >= 0; k--) {
+          const px = (byte >> k) & 1;
+          this.#blit(x + ox, y + oy, px);
+          ox++;
+        }
+
+        oy++;
+      }
+
+      x = (x + 8) & 0x3f;
+      if (x === 0) {
+        y += 8;
+      }
+    }
+  }
+
+  /* Blits to the screen buffer */
+  #blit(x, y, c) {
+    const i = y * 64 + x;
+    if (c === 0) {
+      this.setMemory(SCREEN_DATA_ADDR + i, 0);
+      this.#ctx.fillStyle = "black";
+    } else {
+      this.setMemory(SCREEN_DATA_ADDR + i, 1);
+      this.#ctx.fillStyle = "white";
+    }
+
+    this.#ctx.fillRect(x, y, 1, 1);
   }
 
   /* Triggers an interrupt */
@@ -583,25 +955,10 @@ class FrameVM {
     this.setPC(addr);
   }
 
-  /* Breaks down an instruction into opcode, mode and arguments */
-  #parseInstruction(i) {
-    return [this.#getInstructionOpcode(i), this.#getInstructionMode(i)];
-  }
-
-  /* Gets the opcode of the instruction */
-  #getInstructionOpcode(i) {
-    return i & 0x1f;
-  }
-
-  /* Gets the mode of the instruction */
-  #getInstructionMode(i) {
-    return (i >> 5) & 0x7;
-  }
-
   /* Gets register A from the arguments */
   #getArgsA() {
     const next = this.fetchNext();
-    return next & 0x7;
+    return next & 0xf;
   }
 
   /* Gets the argument for a K instruction */
@@ -609,8 +966,8 @@ class FrameVM {
     return this.fetchNext();
   }
 
-  /* Gets the argument for a KK instruction */
-  #getArgsKK() {
+  /* Gets the argument for a P instruction */
+  #getArgsP() {
     const lo = this.fetchNext();
     const hi = this.fetchNext();
 
@@ -620,44 +977,94 @@ class FrameVM {
   /* Gets the arguments for an AB instruction */
   #getArgsAB() {
     const next = this.fetchNext();
-    const a = next & 0x7;
-    const b = (next >> 3) & 0x7;
+    const a = next & 0xf;
+    const b = (next >> 4) & 0xf;
 
     return [a, b];
   }
 
   /* Gets the arguments for an AK instruction */
   #getArgsAK() {
-    const next = this.fetchNext();
-    const a = next & 0x7;
-
+    const a = this.#getArgsA();
     const k = this.fetchNext();
+
     return [a, k];
+  }
+
+  /* Gets the arguments for an AP instruction */
+  #getArgsAP() {
+    const a = this.#getArgsA();
+    const p = this.#getArgsP();
+
+    return [a, p];
+  }
+
+  /* Gets the arguments for a PA instruction */
+  #getArgsPA() {
+    const p = this.#getArgsP();
+    const a = this.#getArgsA();
+
+    return [p, a];
+  }
+
+  /* Gets the arguments for a PK instruction */
+  #getArgsPK() {
+    const p = this.#getArgsP();
+    const k = this.#getArgsK();
+
+    return [p, k];
   }
 
   /* Gets the arguments for an ABC instruction */
   #getArgsABC() {
-    const next = this.fetchNext();
-    const a = next & 0x7;
-    const b = (next >> 3) & 0x7;
+    const [a, b] = this.#getArgsAB();
+    const c = this.#getArgsA();
 
-    const next2 = this.fetchNext();
-    const c = next2 & 0x7;
     return [a, b, c];
   }
 
   /* Gets the arguments for an ABK instruction */
   #getArgsABK() {
-    const next = this.fetchNext();
-    const a = next & 0x7;
-    const b = (next >> 3) & 0x7;
+    const [a, b] = this.#getArgsAB();
+    const k = this.#getArgsK();
 
-    const k = this.fetchNext();
     return [a, b, k];
+  }
+
+  /* Gets the arguments for an APB instruction */
+  #getArgsAPB() {
+    const [p, a, b] = this.#getArgsPAB();
+    return [a, p, b];
+  }
+
+  /* Gets the arguments for an APK instruction */
+  #getArgsAPK() {
+    const [p, a, k] = this.#getArgsPAK();
+    return [a, p, k];
+  }
+
+  /* Gets the arguments for a PAB instruction */
+  #getArgsPAB() {
+    const p = this.#getArgsP();
+    const [a, b] = this.#getArgsAB();
+
+    return [p, a, b];
+  }
+
+  /* Gets the arguments for a PAK instruction */
+  #getArgsPAK() {
+    const p = this.#getArgsP();
+    const [a, k] = this.#getArgsAK();
+
+    return [p, a, k];
   }
 }
 
 const frameVM = new FrameVM();
+
+const getKernelInfo = () => {
+  return frameVM.getKernelInfo();
+};
 
 const runProgram = (program) => {
   frameVM.loadProgramAndRun(program);

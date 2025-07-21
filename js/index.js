@@ -12,7 +12,8 @@ const init = () => {
   runnerRunButton.addEventListener("click", () => {
     const sourceProgram = editorCodeEditor.value;
 
-    const assembledProgram = assemble(sourceProgram);
+    const kernelInfo = getKernelInfo();
+    const assembledProgram = assemble(sourceProgram, kernelInfo);
     if (assembledProgram) {
       runProgram(assembledProgram);
     }
