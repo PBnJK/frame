@@ -4,6 +4,8 @@
 
 "use strict";
 
+const Syscall = {};
+
 const FRAME_WIN_W = 64;
 const FRAME_WIN_H = 64;
 
@@ -14,9 +16,10 @@ const FRAME_CANVAS_H = FRAME_WIN_H * FRAME_CANVAS_SCALE;
 const MEMORY_SIZE = 0xffff + 1;
 
 const RUN_INTERVAL = 16.777; /* Roughly 60FPS */
-const CYCLES_PER_FRAME = 100;
+const CYCLES_PER_FRAME = 240;
 
 const KERNEL_START_ADDR = 0xe000;
+const INPUT_DATA_ADDR = 0xe700;
 const TXT_CURSOR_POS = 0xe7bf;
 const TXT_DATA_ADDR = 0xe7c0;
 const FONT_START_ADDR = 0xe800;
@@ -25,56 +28,75 @@ const SCREEN_DATA_ADDR = 0xec00;
 const INT_START_ADDR = 0xfffc;
 const ROM_START_ADDR = 0xfffe;
 
-const INSTRUCTIONS_PER_INTERRUPT = 100;
-
 const REG_COUNT = 16;
 const SP = REG_COUNT + 1;
 
-/* Kernel assembly code
- * TODO:
- * - Pre-compile and load as file
- */
+/* Kernel assembly code */
 const KERNEL_SRC = `# The FRAME Kernel
 # pedrob
+#
+# Register usage
+#   $0-$7  Never used, user only
+#   $8-$b  Subroutine arguments
+#   $c-$d  Subroutine return values
+#   $e-$f  General use, user should avoid
 
 .addr 0xe000
+
+# == INPUT ==
+@kinp_get
+  sei $0      # Critical section (no interrupts)
+  sei         # Exit critical section
+  ret
 
 # == TEXT MODE ==
 
 # Clears the screen, leaving the cursor at the top-left
-# Uses registers $8, $15
+# Uses register $e
 @ktxt_clear
   sei $0              # Critical section (no interrupts)
   mov %e7bf, $0       # Set the cursor to the top-left
+  push $8             # Save register $8 on the stack
   mov $8, ' '         # Load $8 with the space character
   @_loop
     call @ktxt_putch  # Draw the character
-    equ $15, $0       # Has cursor looped back to start?
-    jmpf @_loop       # If it hasn't, loop back
+    equ $e, $0       # Has cursor looped back to start?
+    brf @_loop        # If it hasn't, loop
+  pop $8              # Restore register $8
+  sei                 # Exit critical section
   ret
 
 # Prints a null-terminated string to the screen
 # $8 : LSB of the text address
 # $9 : MSB of the text address
-#
-# Uses register $15
 @ktxt_print
-  sei $0              # Critical section (no interrupts)
-  mov $15, $0
+  sei $0               # Critical section (no interrupts)
+  mov $e, $0           # Start at index 0
+  mov 0xfe, $8         # Save LSB to %00fe
+  mov 0xff, $9         # Save MSB to %00ff
   @_loop
-  ret
+    mov $8, (0xfe), $e # Get character
+    equ $8, $0         # Is null-terminator?
+    brt @_ktxt_print_f # If so, exit
+    push $e            # Saves the index
+    call @ktxt_putch   # Draw the character
+    pop $e             # Restores the index
+    inc $e             # Advances the index
+    jmp @_loop         # Loop
+  @_ktxt_print_f
+    sei                 # Exit critical section
+    ret
 
 # Prints a character to the screen, advancing the cursor
 # $8 : ASCII character the be printed
-#
-# Uses register $15
 @ktxt_putch
-  sei $0             # Critical section (no interrupts)
-  mov $15, %e7bf     # Load cursor position
-  mov %e7c0, $15, $8 # Put the character on the buffer
-  inc $15            # Advance the cursor
-  and $15, 0b111111  # Mask the cursor so it wraps around
-  mov %e7bf, $15     # Save the cursor position
+  sei $0            # Critical section (no interrupts)
+  mov $e, %e7bf     # Load cursor position
+  mov %e7c0, $e, $8 # Put the character on the buffer
+  inc $e            # Advance the cursor
+  and $e, 0b111111  # Mask the cursor so it wraps around
+  mov %e7bf, $e     # Save the cursor position
+  sei               # Exit critical section
   ret
 `;
 
@@ -255,6 +277,7 @@ class FrameVM {
   #pc;
 
   #flags;
+  #input;
 
   #clock;
   #needsInterrupt;
@@ -270,6 +293,7 @@ class FrameVM {
 
   constructor() {
     this.#initCanvas();
+    this.#initKeyboard();
     this.#initRegisters();
     this.#initMemory();
     this.#initFlags();
@@ -320,6 +344,11 @@ class FrameVM {
     while (this.#clock < target && this.#running) {
       this.cycle();
     }
+
+    if (this.getFlag(Flag.INTERRUPT)) {
+      this.#draw();
+      this.#triggerInterrupt();
+    }
   }
 
   /* Executes a single CPU cycle */
@@ -342,12 +371,6 @@ class FrameVM {
     this.#pc &= 0xffff;
 
     this.#clock++;
-    if (
-      this.#clock % INSTRUCTIONS_PER_INTERRUPT === 0 &&
-      this.getFlag(Flag.INTERRUPT)
-    ) {
-      this.#needsInterrupt = true;
-    }
 
     return next;
   }
@@ -398,7 +421,12 @@ class FrameVM {
 
   /* Gets a value from memory */
   getMemory(addr) {
-    return this.#memory[addr];
+    switch (addr) {
+      case INPUT_DATA_ADDR:
+        return this.#input;
+      default:
+        return this.#memory[addr];
+    }
   }
 
   /* Gets a 16-bit value from memory */
@@ -504,6 +532,61 @@ class FrameVM {
     this.#ctx.fillRect(0, 0, FRAME_WIN_W, FRAME_WIN_H);
   }
 
+  /* Initializes the keyboard hooks */
+  #initKeyboard() {
+    const KEY_LEFT = 0;
+    const KEY_DOWN = 1;
+    const KEY_UP = 2;
+    const KEY_RIGHT = 3;
+    const KEY_A = 4;
+    const KEY_B = 5;
+    const KEY_START = 6;
+    const KEY_MENU = 7;
+
+    const keyMap = {
+      a: KEY_LEFT,
+      A: KEY_LEFT,
+      ArrowLeft: KEY_LEFT,
+
+      s: KEY_DOWN,
+      S: KEY_DOWN,
+      ArrowDown: KEY_DOWN,
+
+      W: KEY_UP,
+      w: KEY_UP,
+      ArrowUp: KEY_UP,
+
+      D: KEY_RIGHT,
+      d: KEY_RIGHT,
+      ArrowRight: KEY_RIGHT,
+
+      Z: KEY_A,
+      z: KEY_A,
+
+      X: KEY_B,
+      x: KEY_B,
+
+      Enter: KEY_START,
+
+      Backspace: KEY_MENU,
+    };
+
+    this.#input = 0;
+
+    document.addEventListener("keydown", (ev) => {
+      const key = keyMap[ev.key];
+      if (key !== undefined) {
+        this.#input |= 1 << key;
+      }
+    });
+    document.addEventListener("keyup", (ev) => {
+      const key = keyMap[ev.key];
+      if (key !== undefined) {
+        this.#input &= ~(1 << key);
+      }
+    });
+  }
+
   /* Initializes the VM registers */
   #initRegisters() {
     this.#registers = {};
@@ -554,6 +637,16 @@ class FrameVM {
   /* Initializes the instruction callbacks */
   #initInstructions() {
     this.#instructions = {
+      [Opcode.HLT_A]: () => {
+        const a = this.#getArgsA();
+        const A = this.getRegister(a);
+
+        this.#doSyscall(A);
+      },
+      [Opcode.HLT_K]: () => {
+        const k = this.#getArgsK();
+        this.#doSyscall(k);
+      },
       [Opcode.HLT_O]: () => {
         this.stop();
       },
@@ -569,6 +662,25 @@ class FrameVM {
         const P = this.getMemory(p + k);
 
         this.setRegister(a, P);
+      },
+      [Opcode.MOV_AIB]: () => {
+        const [a, i, b] = this.#getArgsAIB();
+        const lo = this.getMemory(i);
+        const hi = this.getMemory((i + 1) & 0xff);
+
+        const I = lo | (hi << 8);
+        const B = this.getRegister(b);
+        const P = this.getMemory(I + B);
+
+        this.setRegister(a, P);
+      },
+      [Opcode.MOV_AIK]: () => {
+        const [a, i, k] = this.#getArgsAIK();
+        const lo = this.getMemory(i++);
+        const hi = this.getMemory(i & 0xff);
+
+        const I = lo | (hi << 8);
+        this.setRegister(a, I + k);
       },
       [Opcode.MOV_PAB]: () => {
         const [p, a, b] = this.#getArgsPAB();
@@ -592,6 +704,16 @@ class FrameVM {
       [Opcode.MOV_AK]: () => {
         const [a, k] = this.#getArgsAK();
         this.setRegister(a, k);
+      },
+      [Opcode.MOV_KA]: () => {
+        const [k, a] = this.#getArgsKA();
+        const A = this.getRegister(a);
+
+        this.setMemory(k, A);
+      },
+      [Opcode.MOV_KK]: () => {
+        const [k, l] = this.#getArgsKK();
+        this.setMemory(k, l);
       },
       [Opcode.MOV_AP]: () => {
         const [a, p] = this.#getArgsAP();
@@ -625,41 +747,41 @@ class FrameVM {
         const p = this.#getArgsP();
         this.setPC(p);
       },
-      [Opcode.JMPT_PA]: () => {
+      [Opcode.BRT_PA]: () => {
         const [p, a] = this.#getArgsPA();
         if (this.getFlag(Flag.CONDITIONAL) !== 0) {
           const P = p + a;
           this.setPC(P);
         }
       },
-      [Opcode.JMPT_PK]: () => {
+      [Opcode.BRT_PK]: () => {
         const [p, k] = this.#getArgsPK();
         if (this.getFlag(Flag.CONDITIONAL) !== 0) {
           const P = p + k;
           this.setPC(P);
         }
       },
-      [Opcode.JMPT_P]: () => {
+      [Opcode.BRT_P]: () => {
         const p = this.#getArgsP();
         if (this.getFlag(Flag.CONDITIONAL) !== 0) {
           this.setPC(p);
         }
       },
-      [Opcode.JMPF_PA]: () => {
+      [Opcode.BRF_PA]: () => {
         const [p, a] = this.#getArgsPA();
         if (this.getFlag(Flag.CONDITIONAL) === 0) {
           const P = p + a;
           this.setPC(P);
         }
       },
-      [Opcode.JMPF_PK]: () => {
+      [Opcode.BRF_PK]: () => {
         const [p, k] = this.#getArgsPK();
         if (this.getFlag(Flag.CONDITIONAL) === 0) {
           const P = p + k;
           this.setPC(P);
         }
       },
-      [Opcode.JMPF_P]: () => {
+      [Opcode.BRF_P]: () => {
         const p = this.#getArgsP();
         if (this.getFlag(Flag.CONDITIONAL) === 0) {
           this.setPC(p);
@@ -677,12 +799,17 @@ class FrameVM {
       },
       [Opcode.LSS_AB]: () => {
         const [a, b] = this.#getArgsAB();
-        const lss = this.getRegister(a) < this.getRegister(b) ? 1 : 0;
+        const A = this.getRegister(a);
+        const B = this.getRegister(b);
+
+        const lss = A < B ? 1 : 0;
         this.setFlag(Flag.CONDITIONAL, lss);
       },
       [Opcode.LSS_AK]: () => {
         const [a, k] = this.#getArgsAK();
-        const lss = this.getRegister(a) < k ? 1 : 0;
+        const A = this.getRegister(a);
+
+        const lss = A < k ? 1 : 0;
         this.setFlag(Flag.CONDITIONAL, lss);
       },
       [Opcode.AND_ABC]: () => {
@@ -744,6 +871,44 @@ class FrameVM {
 
         const OR = A | k;
         this.setRegister(a, OR);
+      },
+      [Opcode.LSH_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const A = this.getRegister(a);
+        const B = this.getRegister(b);
+
+        this.setRegister(a, A << B);
+      },
+      [Opcode.LSH_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        const A = this.getRegister(a);
+
+        this.setRegister(a, A << k);
+      },
+      [Opcode.LSH_A]: () => {
+        const a = this.#getArgsA();
+        const A = this.getRegister(a);
+
+        this.setRegister(a, A << 1);
+      },
+      [Opcode.RSH_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const A = this.getRegister(a);
+        const B = this.getRegister(b);
+
+        this.setRegister(a, A >> B);
+      },
+      [Opcode.RSH_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        const A = this.getRegister(a);
+
+        this.setRegister(a, A >> k);
+      },
+      [Opcode.RSH_A]: () => {
+        const a = this.#getArgsA();
+        const A = this.getRegister(a);
+
+        this.setRegister(a, A >> 1);
       },
       [Opcode.NOT_AB]: () => {
         const [a, b] = this.#getArgsAB();
@@ -903,6 +1068,9 @@ class FrameVM {
     analyserFlagInterrupt.innerText = `In : ${this.getFlag(Flag.INTERRUPT)}`;
   }
 
+  /* Performs a syscall */
+  #doSyscall(_syscall) {}
+
   /* Draws to the screen
    * TODO:
    * - Draw modes
@@ -998,6 +1166,22 @@ class FrameVM {
     return [a, k];
   }
 
+  /* Gets the arguments for a KA instruction */
+  #getArgsKA() {
+    const k = this.fetchNext();
+    const a = this.#getArgsA();
+
+    return [k, a];
+  }
+
+  /* Gets the arguments for a KK instruction */
+  #getArgsKK() {
+    const k = this.fetchNext();
+    const l = this.fetchNext();
+
+    return [k, l];
+  }
+
   /* Gets the arguments for an AP instruction */
   #getArgsAP() {
     const a = this.#getArgsA();
@@ -1048,6 +1232,20 @@ class FrameVM {
   #getArgsAPK() {
     const [p, a, k] = this.#getArgsPAK();
     return [a, p, k];
+  }
+
+  /* Gets the arguments for an AIB instruction */
+  #getArgsAIB() {
+    const [a, b, i] = this.#getArgsABK();
+    return [a, i, b];
+  }
+
+  /* Gets the arguments for an AIK instruction */
+  #getArgsAIK() {
+    const [a, i] = this.#getArgsAK();
+    const k = this.fetchNext();
+
+    return [a, i, k];
   }
 
   /* Gets the arguments for a PAB instruction */

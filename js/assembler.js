@@ -17,8 +17,10 @@ const TokenType = {
   REGISTER: 4,
   DIRECTIVE: 5,
   ADDRESS: 6,
+  INDIRECT: 7,
 
-  COMMA: 7,
+  COMMA: 8,
+  RPAREN: 9,
 
   ERROR: 254,
   EOF: 255,
@@ -26,113 +28,133 @@ const TokenType = {
 
 const Opcode = {
   /* HLT family */
-  HLT_O: 0x0,
+  HLT_A: 0x0,
+  HLT_K: 0x1,
+  HLT_O: 0x2,
 
   /* MOV family */
-  MOV_APB: 0x1,
-  MOV_APK: 0x2,
-  MOV_PAB: 0x3,
-  MOV_PAK: 0x4,
-  MOV_AB: 0x5,
-  MOV_AK: 0x6,
-  MOV_AP: 0x7,
-  MOV_PA: 0x8,
-  MOV_PK: 0x9,
+  MOV_APB: 0x3,
+  MOV_APK: 0x4,
+  MOV_AIB: 0x5,
+  MOV_AIK: 0x6,
+  MOV_PAB: 0x7,
+  MOV_PAK: 0x8,
+  MOV_AB: 0x9,
+  MOV_AK: 0xa,
+  MOV_AP: 0xb,
+  MOV_KA: 0xc,
+  MOV_KK: 0xd,
+  MOV_PA: 0xe,
+  MOV_PK: 0xf,
 
   /* JMP family*/
-  JMP_PA: 0xa,
-  JMP_PK: 0xb,
-  JMP_P: 0xc,
+  JMP_PA: 0x10,
+  JMP_PK: 0x11,
+  JMP_P: 0x12,
 
-  /* JMPT family */
-  JMPT_PA: 0xd,
-  JMPT_PK: 0xe,
-  JMPT_P: 0xf,
+  /* BRT family */
+  BRT_PA: 0x13,
+  BRT_PK: 0x14,
+  BRT_P: 0x15,
 
-  /* JMPF family */
-  JMPF_PA: 0x10,
-  JMPF_PK: 0x11,
-  JMPF_P: 0x12,
+  /* BRF family */
+  BRF_PA: 0x16,
+  BRF_PK: 0x17,
+  BRF_P: 0x18,
 
   /* EQU family */
-  EQU_AB: 0x13,
-  EQU_AK: 0x14,
+  EQU_AB: 0x19,
+  EQU_AK: 0x1a,
 
   /* LSS family */
-  LSS_AB: 0x15,
-  LSS_AK: 0x16,
+  LSS_AB: 0x1b,
+  LSS_AK: 0x1c,
 
   /* AND family */
-  AND_ABC: 0x17,
-  AND_ABK: 0x18,
-  AND_AB: 0x19,
-  AND_AK: 0x1a,
+  AND_ABC: 0x1d,
+  AND_ABK: 0x1e,
+  AND_AB: 0x1f,
+  AND_AK: 0x20,
 
   /* OR family */
-  OR_ABC: 0x1b,
-  OR_ABK: 0x1c,
-  OR_AB: 0x1d,
-  OR_AK: 0x1e,
+  OR_ABC: 0x21,
+  OR_ABK: 0x22,
+  OR_AB: 0x23,
+  OR_AK: 0x24,
 
   /* NOT family */
-  NOT_AB: 0x1f,
-  NOT_AK: 0x20,
-  NOT_A: 0x21,
-  NOT_O: 0x22,
+  NOT_AB: 0x25,
+  NOT_AK: 0x26,
+  NOT_A: 0x27,
+  NOT_O: 0x28,
+
+  /* LSH family */
+  LSH_AB: 0x29,
+  LSH_AK: 0x2a,
+  LSH_A: 0x2b,
+
+  /* RSH family */
+  RSH_AB: 0x2c,
+  RSH_AK: 0x2d,
+  RSH_A: 0x2e,
 
   /* ADD family */
-  ADD_ABC: 0x23,
-  ADD_ABK: 0x24,
-  ADD_AB: 0x25,
-  ADD_AK: 0x26,
+  ADD_ABC: 0x2f,
+  ADD_ABK: 0x30,
+  ADD_AB: 0x31,
+  ADD_AK: 0x32,
 
   /* INC family */
-  INC_A: 0x27,
-  INC_P: 0x28,
+  INC_A: 0x33,
+  INC_P: 0x34,
 
   /* DEC family */
-  DEC_A: 0x29,
-  DEC_P: 0x2a,
+  DEC_A: 0x35,
+  DEC_P: 0x36,
 
   /* CALL family */
-  CALL_P: 0x2b,
+  CALL_P: 0x37,
 
   /* RET family */
-  RET_O: 0x2c,
+  RET_O: 0x38,
 
   /* PUSH family */
-  PUSH_A: 0x2d,
-  PUSH_K: 0x2e,
+  PUSH_A: 0x39,
+  PUSH_K: 0x3a,
 
   /* POP family */
-  POP_A: 0x2f,
-  POP_O: 0x30,
+  POP_A: 0x3b,
+  POP_O: 0x3c,
 
   /* SEI family */
-  SEI_A: 0x31,
-  SEI_K: 0x32,
-  SEI_O: 0x33,
+  SEI_A: 0x3d,
+  SEI_K: 0x3e,
+  SEI_O: 0x3f,
 };
 
 const Mode = {
   O: 0x0,
 
   A: 0x1 /* Register */,
-  K: 0x2 /* Constant */,
+  K: 0x2 /* Immediate */,
   P: 0x3 /* Address  */,
 
   AB: 0x4 /* Register, Register */,
-  AK: 0x5 /* Register, Constant */,
+  AK: 0x5 /* Register, Immediate */,
   AP: 0x6 /* Register, Address */,
-  PA: 0x7 /* Address, Register */,
-  PK: 0x8 /* Address, Constant */,
+  KA: 0x7 /* Immediate, Register */,
+  KK: 0x8 /* Immediate, Immediate */,
+  PA: 0x9 /* Address, Register */,
+  PK: 0xa /* Address, Immediate */,
 
-  ABC: 0x9 /* Register, Register, Register */,
-  ABK: 0xa /* Register, Register, Constant */,
-  APB: 0xb /* Register, Address, Register */,
-  APK: 0xc /* Register, Address, Constant */,
-  PAB: 0xd /* Address, Register, Register */,
-  PAK: 0xe /* Address, Register, Constant */,
+  ABC: 0xb /* Register, Register, Register */,
+  ABK: 0xc /* Register, Register, Immediate */,
+  APB: 0xd /* Register, Address, Register */,
+  APK: 0xe /* Register, Address, Immediate */,
+  AIB: 0xf /* Register, Indirect, Register */,
+  AIK: 0x10 /* Register, Indirect, Immediate */,
+  PAB: 0x11 /* Address, Register, Register */,
+  PAK: 0x12 /* Address, Register, Immediate */,
 };
 
 class Assembler {
@@ -178,7 +200,7 @@ class Assembler {
     const s = new Set(v);
 
     if (v.length !== s.size) {
-      throw new Error(`Enum ${e.name} is not unique`);
+      throw new Error(`Enum ${e} is not unique`);
     }
   }
 
@@ -268,6 +290,16 @@ class Assembler {
       Mode.AK,
     );
 
+    this.#modeTrie.insertMode(
+      [TokenType.IMMEDIATE, TokenType.REGISTER],
+      Mode.KA,
+    );
+
+    this.#modeTrie.insertMode(
+      [TokenType.IMMEDIATE, TokenType.IMMEDIATE],
+      Mode.KK,
+    );
+
     this.#modeTrie.insertMode([TokenType.REGISTER, TokenType.ADDRESS], Mode.AP);
     this.#modeTrie.insertMode([TokenType.ADDRESS, TokenType.REGISTER], Mode.PA);
     this.#modeTrie.insertMode(
@@ -296,6 +328,16 @@ class Assembler {
     );
 
     this.#modeTrie.insertMode(
+      [TokenType.REGISTER, TokenType.INDIRECT, TokenType.REGISTER],
+      Mode.AIB,
+    );
+
+    this.#modeTrie.insertMode(
+      [TokenType.REGISTER, TokenType.INDIRECT, TokenType.IMMEDIATE],
+      Mode.AIK,
+    );
+
+    this.#modeTrie.insertMode(
       [TokenType.ADDRESS, TokenType.REGISTER, TokenType.REGISTER],
       Mode.PAB,
     );
@@ -309,14 +351,22 @@ class Assembler {
   /* Initializes the map that matches a mnemonic to its opcode */
   #initOpMap() {
     this.#opMap = new Map();
-    this.#opMap.set("hlt", { [Mode.O]: Opcode.HLT_O });
+    this.#opMap.set("hlt", {
+      [Mode.A]: Opcode.HLT_A,
+      [Mode.K]: Opcode.HLT_K,
+      [Mode.O]: Opcode.HLT_O,
+    });
     this.#opMap.set("mov", {
       [Mode.APB]: Opcode.MOV_APB,
       [Mode.APK]: Opcode.MOV_APK,
+      [Mode.AIB]: Opcode.MOV_AIB,
+      [Mode.AIK]: Opcode.MOV_AIK,
       [Mode.PAB]: Opcode.MOV_PAB,
       [Mode.PAK]: Opcode.MOV_PAK,
       [Mode.AB]: Opcode.MOV_AB,
       [Mode.AK]: Opcode.MOV_AK,
+      [Mode.KA]: Opcode.MOV_KA,
+      [Mode.KK]: Opcode.MOV_KK,
       [Mode.AP]: Opcode.MOV_AP,
       [Mode.PA]: Opcode.MOV_PA,
       [Mode.PK]: Opcode.MOV_PK,
@@ -326,15 +376,15 @@ class Assembler {
       [Mode.PK]: Opcode.JMP_PK,
       [Mode.P]: Opcode.JMP_P,
     });
-    this.#opMap.set("jmpt", {
-      [Mode.PA]: Opcode.JMPT_PA,
-      [Mode.PK]: Opcode.JMPT_PK,
-      [Mode.P]: Opcode.JMPT_P,
+    this.#opMap.set("brt", {
+      [Mode.PA]: Opcode.BRT_PA,
+      [Mode.PK]: Opcode.BRT_PK,
+      [Mode.P]: Opcode.BRT_P,
     });
-    this.#opMap.set("jmpf", {
-      [Mode.PA]: Opcode.JMPF_PA,
-      [Mode.PK]: Opcode.JMPF_PK,
-      [Mode.P]: Opcode.JMPF_P,
+    this.#opMap.set("brf", {
+      [Mode.PA]: Opcode.BRF_PA,
+      [Mode.PK]: Opcode.BRF_PK,
+      [Mode.P]: Opcode.BRF_P,
     });
     this.#opMap.set("equ", {
       [Mode.AB]: Opcode.EQU_AB,
@@ -355,6 +405,16 @@ class Assembler {
       [Mode.ABK]: Opcode.OR_ABK,
       [Mode.AB]: Opcode.OR_AB,
       [Mode.AK]: Opcode.OR_AK,
+    });
+    this.#opMap.set("lsh", {
+      [Mode.AB]: Opcode.LSH_AB,
+      [Mode.AK]: Opcode.LSH_AK,
+      [Mode.A]: Opcode.LSH_A,
+    });
+    this.#opMap.set("rsh", {
+      [Mode.AB]: Opcode.RSH_AB,
+      [Mode.AK]: Opcode.RSH_AK,
+      [Mode.A]: Opcode.RSH_A,
     });
     this.#opMap.set("not", {
       [Mode.AB]: Opcode.NOT_AB,
@@ -556,10 +616,14 @@ class Assembler {
         return this.#assembleDirective();
       case "%":
         return this.#assembleAddress();
+      case "(":
+        return this.#assembleIndirect();
       case "'":
         return this.#assembleCharacter();
       case ",":
         return this.#createToken(TokenType.COMMA, char);
+      case ")":
+        return this.#createToken(TokenType.RPAREN, char);
     }
 
     return this.#createToken(TokenType.ERROR, `unexpected character "${char}"`);
@@ -593,9 +657,10 @@ class Assembler {
   #skipComment() {
     while (!this.#reachedEndOfSource() && this.#advance() != "\n");
     this.#line++;
+    this.#char = 1;
   }
 
-  /* Assembles an identifier (instruction, label, constant or register) */
+  /* Assembles an identifier (instruction or defined identifier) */
   #assembleIdentifier() {
     this.#rewind();
     const identifier = this.#readIdentifier();
@@ -710,11 +775,11 @@ class Assembler {
       return this.#createToken(TokenType.REGISTER, SP);
     }
 
-    if (!this.#isDigit(char)) {
+    if (!this.#isHex(char)) {
       return this.#createError(`expected register number, got "${char}"`);
     }
 
-    const num = this.#readDecimalNumber();
+    const num = this.#readHexNumber();
     if (num > 15) {
       return this.#createError(`no such register \$${num}`);
     }
@@ -732,7 +797,7 @@ class Assembler {
   #assembleAddress() {
     const start = this.#peek();
     if (!this.#isHex(start)) {
-      const msg = `expected start of address after '%', got "${start}"`;
+      const msg = `expected start of address after '%', got '${start}'`;
       return this.#createError(msg);
     }
 
@@ -745,9 +810,43 @@ class Assembler {
     return this.#createToken(TokenType.ADDRESS, addr);
   }
 
+  /* Assembles an indirect zero-page address */
+  #assembleIndirect() {
+    const token = this.#assembleToken();
+    if (token.type !== TokenType.IMMEDIATE) {
+      const type = this.#getTypeAsString(token.type);
+      const msg = `expected an immediate zero-page address after '(' got '${type}'`;
+      return this.#createError(msg);
+    }
+
+    if (!this.#expect(TokenType.RPAREN)) {
+      const type = this.#getTypeAsString(this.#token.type);
+      const msg = `expected closing parenthesis, got '${type}'`;
+      return this.#createError(msg);
+    }
+
+    const addr = token.lexeme;
+    if (addr > 0xff) {
+      const msg = `'${addr}' is not a valid zero-page address (must be a single byte)`;
+      return this.#createError(msg);
+    }
+
+    return this.#createToken(TokenType.INDIRECT, addr);
+  }
+
   /* Assembles an ASCII character */
   #assembleCharacter() {
-    const char = this.#advance();
+    let char = this.#advance();
+    if (char === "\\") {
+      const next = this.#advance();
+      switch (next) {
+        case "n":
+          char = "\n";
+          break;
+        default:
+          return this.#createError(`'\\${next}' is not a valid character`);
+      }
+    }
 
     const quote = this.#advance();
     if (quote !== "'") {
@@ -942,6 +1041,11 @@ class Assembler {
       }
 
       this.#emit(byte);
+
+      if (!this.#expect(TokenType.COMMA)) {
+        this.#hasLeftoverToken = true;
+        break;
+      }
     }
   }
 
@@ -1009,8 +1113,7 @@ class Assembler {
   #handleInstruction(opName, opMap) {
     if (this.#peek() === "\n") {
       const mode = Mode.O;
-      this.#emitOpFromArgs(mode, opName, opMap, []);
-      return;
+      return this.#emitOpFromArgs(mode, opName, opMap, []);
     }
 
     const [args, err] = this.#getArguments();
@@ -1019,7 +1122,7 @@ class Assembler {
     }
 
     const mode = this.#getModeFromArguments(args);
-    this.#emitOpFromArgs(mode, opName, opMap, args);
+    return this.#emitOpFromArgs(mode, opName, opMap, args);
   }
 
   /* Emits an operation as bytes */
@@ -1055,6 +1158,12 @@ class Assembler {
       case Mode.AK:
         this.#emitAK(op, ...values);
         break;
+      case Mode.KA:
+        this.#emitKA(op, ...values);
+        break;
+      case Mode.KK:
+        this.#emitKK(op, ...values);
+        break;
       case Mode.AP:
         this.#emitAP(op, ...values);
         break;
@@ -1076,12 +1185,23 @@ class Assembler {
       case Mode.APK:
         this.#emitAPK(op, ...values);
         break;
+      case Mode.AIB:
+        this.#emitAIB(op, ...values);
+        break;
+      case Mode.AIK:
+        this.#emitAIK(op, ...values);
+        break;
       case Mode.PAB:
         this.#emitPAB(op, ...values);
         break;
       case Mode.PAK:
         this.#emitPAK(op, ...values);
         break;
+      default: {
+        const asString = this.#getModeAsString(mode);
+        const msg = `got unknown or unhandled mode ${asString}`;
+        return this.#createError(msg);
+      }
     }
   }
 
@@ -1115,6 +1235,7 @@ class Assembler {
     switch (token.type) {
       case TokenType.REGISTER:
       case TokenType.ADDRESS:
+      case TokenType.INDIRECT:
         return token;
       case TokenType.IMMEDIATE:
         return this.#resolveImmediate(token);
@@ -1220,12 +1341,16 @@ class Assembler {
         return "register, register";
       case Mode.AK:
         return "register, immediate";
+      case Mode.KA:
+        return "immediate, register";
+      case Mode.KK:
+        return "immediate, immediate";
       case Mode.AP:
         return "register, address";
       case Mode.PA:
         return "address, register";
       case Mode.PK:
-        return "address, constant";
+        return "address, immediate";
       case Mode.ABC:
         return "register, register, register";
       case Mode.ABK:
@@ -1234,10 +1359,16 @@ class Assembler {
         return "register, address, register";
       case Mode.APK:
         return "register, address, immediate";
+      case Mode.AIB:
+        return "register, indirect, register";
+      case Mode.AIK:
+        return "register, indirect, immediate";
       case Mode.PAB:
         return "address, register, register";
       case Mode.PAK:
         return "address, register, immediate";
+      default:
+        return mode.toString();
     }
   }
 
@@ -1256,8 +1387,14 @@ class Assembler {
         return "register";
       case TokenType.DIRECTIVE:
         return "directive";
+      case TokenType.ADDRESS:
+        return "address";
+      case TokenType.INDIRECT:
+        return "indirect address";
       case TokenType.COMMA:
-        return "comma";
+        return "comma (',')";
+      case TokenType.RPAREN:
+        return "right parentesis (')')";
       case TokenType.ERROR:
         return "error";
       case TokenType.EOF:
@@ -1276,6 +1413,7 @@ class Assembler {
       case TokenType.IMMEDIATE:
       case TokenType.REGISTER:
       case TokenType.ADDRESS:
+      case TokenType.INDIRECT:
         return arg.lexeme;
     }
 
@@ -1325,6 +1463,22 @@ class Assembler {
     const K = this.#prepareK(k);
 
     this.#emitA(op, a);
+    this.#emit(K);
+  }
+
+  /* Emits KA op */
+  #emitKA(op, k, a) {
+    const A = this.#prepareA(a);
+
+    this.#emitK(op, k);
+    this.#emit(A);
+  }
+
+  /* Emits KK op */
+  #emitKK(op, k, l) {
+    const K = this.#prepareK(l);
+
+    this.#emitK(op, k);
     this.#emit(K);
   }
 
@@ -1379,6 +1533,19 @@ class Assembler {
     this.#emitPAK(op, p, a, k);
   }
 
+  /* Emits AIB op */
+  #emitAIB(op, a, i, b) {
+    this.#emitABK(op, a, b, i);
+  }
+
+  /* Emits AIK op */
+  #emitAIK(op, a, i, k) {
+    const K = this.#prepareK(k);
+
+    this.#emitAK(op, a, i);
+    this.#emit(K);
+  }
+
   /* Emits PAB op */
   #emitPAB(op, p, a, b) {
     const AB = this.#prepareA(a) | this.#prepareB(b);
@@ -1412,7 +1579,7 @@ class Assembler {
     return c & 0xf;
   }
 
-  /* Prepare K constant for instruction */
+  /* Prepare K immediate for instruction */
   #prepareK(k) {
     return k & 0xff;
   }
@@ -1497,12 +1664,12 @@ class Assembler {
   }
 }
 
-const assembler = new Assembler();
-
 const assemble = (program, extraInfo) => {
+  const assembler = new Assembler();
   return assembler.assembleProgram(program, extraInfo);
 };
 
 const assembleWithInfo = (program, extraInfo) => {
+  const assembler = new Assembler();
   return assembler.assembleProgramWithInfo(program, extraInfo);
 };

@@ -1,0 +1,48 @@
+# .text directive
+  Inserts raw ASCII text into the program. Strings are written as-is.
+
+Usage:
+  .text "Raw text"
+
+  # Memory view: 0  1  2  3  4  5  6  7
+  #              R  a  w     T  e  x  t
+
+# .textz directive
+  Inserts ASCII text into the program. This directive differs from .text in that
+  it writes an extra NULL (zero) byte at the end of the string.
+
+Usage:
+  .textz "C-style text"
+  # Memory view: 0  1  2  3  4  5  6  7  8  9 10 11 12 13
+  #              C  -  s  t  y  l  e     t  e  x  t \0
+
+# .texts
+  Inserts ASCII text into the program. This directive differs from .text in that
+  it writes the length of the string first, before writing the string contents.
+
+Usage:
+  .texts "Pascal text"
+  # Memory view: 0  1  2  3  4  5  6  7  8  9 10 11
+  #              11 P  a  s  c  a  l     t  e  x  t
+
+Note:
+  A note on string length: the format of the string length may vary. If the length
+  can fit into a single byte (that is, it is smaller than 256,) then it will be
+  emitted as such.
+  Otherwise, the following algorithm applies:
+
+    Algorithm
+      While Length > 255 Do
+        Emit 255
+        Length = Length - 256
+      End
+      Emit Length
+    End
+
+  The following examples should make it clearer:
+    LENGTH | BYTES EMITTED
+    255    | 0xff
+    256    | 0xff 0x00
+    257    | 0xff 0x01
+    320    | 0xff 0x40
+    728    | 0xff 0xff 0xd8

@@ -9,8 +9,9 @@
 - Registers: 16
 
 ## Memory Mapping
-- 0x0000-0x00ff: Stack
-- 0x0100-0xdfff: Program memory
+- 0x0000-0x00ff: Zero-page
+- 0x0100-0x01ff: Stack
+- 0x0200-0xdfff: Program memory
 - 0xe000-0xe7bf: Kernel
 - 0xe7c0-0xe7ff: Text Mode data
 - 0xe800-0xec00: Font data
@@ -25,13 +26,18 @@ Halts execution
 Moves a value from one place to another
 - mov [a], [%], [b]: Moves the value in address ([%] + the value in register [b])
                      into register [a]
+- mov [a], [i], [b]: Moves the value in address ((i) + the value in register [b])
+                     into register [a]
 - mov [a], [%], [k]: Moves the value in address ([%] + value [k]) into register [a]
+- mov [a], [i], [k]: Moves the value in address (((i) + value [k]) into register [a]
 - mov [%], [a], [b]: Moves the value in register [b] into address ([%] + the value
                      in register [a])
 - mov [%], [a], [k]: Moves value [k] into address ([%] + the value in register [a])
 - mov [a], [b]:      Moves the value in register [b] into register [a]
 - mov [a], [k]:      Moves value [k] into register [a]
 - mov [a], [%]:      Moves the value in address [%] into register [a]
+- mov [k], [a]:      Moves the value in register [a] into zero-page address [k]
+- mov [k], [l]:      Moves value [l] into zero-page address [k]
 - mov [%], [a]:      Moves the value in register [a] into address [%]
 - mov [%], [k]:      Moves value [k] into address [%]
 
