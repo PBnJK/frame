@@ -4,7 +4,10 @@
 
 "use strict";
 
-const START_POINT = "@main";
+const START_POINT = "main";
+
+const LABEL_LSB = "<";
+const LABEL_MSB = ">";
 
 const TokenType = {
   INSTRUCTION: 0,
@@ -149,6 +152,9 @@ class Assembler {
 
   #labels;
   #unresolvedLabels;
+
+  #unresolvedLsbLabels;
+  #unresolvedMsbLabels;
 
   #modeTrie;
   #opMap;
@@ -443,6 +449,8 @@ class Assembler {
 
     this.#labels = new Map();
     this.#unresolvedLabels = new Map();
+    this.#unresolvedLsbLabels = new Map();
+    this.#unresolvedMsbLabels = new Map();
 
     this.#defines = new Map();
 
@@ -485,10 +493,16 @@ class Assembler {
       } while (this.#hasLeftoverToken);
     }
 
-    if (this.#unresolvedLabels.size !== 0) {
+    const unresolved = new Map([
+      ...this.#unresolvedLabels,
+      ...this.#unresolvedLsbLabels,
+      ...this.#unresolvedMsbLabels,
+    ]);
+
+    if (unresolved.size !== 0) {
       let msg = "the following label(s) could not be resolved:\n";
-      for (const [k, v] of this.#unresolvedLabels) {
-        msg += `- "${k}" = "${v}"\n`;
+      for (const k of unresolved.keys()) {
+        msg += `- "${k}"\n`;
       }
 
       const err = this.#createError(msg);
@@ -583,6 +597,7 @@ class Assembler {
 
   /* Assembles an identifier (instruction, label, constant or register) */
   #assembleIdentifier() {
+    this.#rewind();
     const identifier = this.#readIdentifier();
     if (this.#opMap.has(identifier)) {
       return this.#createToken(TokenType.INSTRUCTION, identifier);
@@ -593,7 +608,7 @@ class Assembler {
 
   /* Reads the next identifier */
   #readIdentifier() {
-    const start = this.#idx - 1;
+    const start = this.#idx;
     while (!this.#reachedEndOfSource() && this.#isIdentifier(this.#peek())) {
       this.#advance();
     }
@@ -671,8 +686,21 @@ class Assembler {
 
   /* Assembles a label */
   #assembleLabel() {
-    const identifier = this.#readIdentifier();
-    return this.#createToken(TokenType.LABEL, identifier);
+    switch (this.#peek()) {
+      case LABEL_LSB:
+      case LABEL_MSB: {
+        const type = this.#advance();
+        const label = this.#readIdentifier();
+        return this.#createToken(TokenType.IMMEDIATE, {
+          label: label,
+          type: type,
+        });
+      }
+      default: {
+        const label = this.#readIdentifier();
+        return this.#createToken(TokenType.LABEL, label);
+      }
+    }
   }
 
   /* Assembles a register */
@@ -787,7 +815,7 @@ class Assembler {
     const label = token.lexeme;
     const addr = this.#pos;
 
-    if (label[1] !== "_" && this.#labels.get(label)) {
+    if (label[0] !== "_" && this.#labels.get(label)) {
       const msg = `tried to redefine label ${label}. only labels that start with "_" may be redefined`;
       return this.#createError(msg);
     }
@@ -797,6 +825,20 @@ class Assembler {
     const unresolved = this.#unresolvedLabels.get(label);
     if (unresolved) {
       this.#fixUnresolvedLabel(label, addr, unresolved);
+    }
+
+    const unresolvedLsb = this.#unresolvedLsbLabels.get(label);
+    if (unresolvedLsb) {
+      const lo = addr & 0xff;
+      this.#fixUnresolvedLabelImmediate(lo, unresolvedLsb);
+      this.#unresolvedLsbLabels.delete(label);
+    }
+
+    const unresolvedMsb = this.#unresolvedMsbLabels.get(label);
+    if (unresolvedMsb) {
+      const hi = (addr >> 8) & 0xff;
+      this.#fixUnresolvedLabelImmediate(hi, unresolvedMsb);
+      this.#unresolvedMsbLabels.delete(label);
     }
   }
 
@@ -810,8 +852,8 @@ class Assembler {
       this.#program[at] = hi;
     };
 
-    for (const i of unresolved) {
-      let op = this.#program[i];
+    for (let i of unresolved) {
+      let op = this.#program[i++];
       const mode = this.#modeMap.get(op);
       switch (mode) {
         case Mode.P:
@@ -821,10 +863,10 @@ class Assembler {
         case Mode.PAB:
         case Mode.APK:
         case Mode.PAK:
-          fix(i + 1);
+          fix(i);
           break;
         case Mode.AP:
-          fix(i + 2);
+          fix(i + 1);
           break;
       }
     }
@@ -832,13 +874,41 @@ class Assembler {
     this.#unresolvedLabels.delete(label);
   }
 
+  /* Fixes a now-declared unresolved label in an immediate token */
+  #fixUnresolvedLabelImmediate(addr, unresolved) {
+    const fix = (at) => {
+      this.#program[at] = addr;
+    };
+
+    for (let i of unresolved) {
+      let op = this.#program[i++];
+      const mode = this.#modeMap.get(op);
+      switch (mode) {
+        case Mode.K:
+          fix(i);
+          break;
+        case Mode.AK:
+        case Mode.ABK:
+          fix(i + 1);
+          break;
+        case Mode.PK:
+          fix(i + 2);
+          break;
+        case Mode.APK:
+        case Mode.PAK:
+          fix(i + 3);
+          break;
+      }
+    }
+  }
+
   /* Emits a directive */
   #emitDirective(token) {
     const directives = {
-      ".addr": this.#emitDirectiveAddr.bind(this),
-      ".byte": this.#emitDirectiveByte.bind(this),
-      ".def": this.#emitDirectiveDef.bind(this),
-      ".word": this.#emitDirectiveWord.bind(this),
+      addr: this.#emitDirectiveAddr.bind(this),
+      byte: this.#emitDirectiveByte.bind(this),
+      def: this.#emitDirectiveDef.bind(this),
+      word: this.#emitDirectiveWord.bind(this),
     };
 
     const directive = directives[token.lexeme];
@@ -846,7 +916,7 @@ class Assembler {
       return directive();
     }
 
-    return this.#createError(`no such directive "${token.lexeme}"`);
+    return this.#createError(`no such directive ".${token.lexeme}"`);
   }
 
   /* Emits a .addr directive
@@ -955,7 +1025,7 @@ class Assembler {
   /* Emits an operation as bytes */
   #emitOpFromArgs(mode, opName, opMap, args) {
     const op = opMap[mode];
-    if (mode === null || !op) {
+    if (!op || mode === null) {
       const rArgs = this.#getModeAsString(mode);
       const eArgs = Object.keys(opMap)
         .map((m) => this.#getModeAsString(Number(m)))
@@ -1043,10 +1113,11 @@ class Assembler {
   #getArgument() {
     let token = this.#assembleToken();
     switch (token.type) {
-      case TokenType.IMMEDIATE:
       case TokenType.REGISTER:
       case TokenType.ADDRESS:
         return token;
+      case TokenType.IMMEDIATE:
+        return this.#resolveImmediate(token);
       case TokenType.LABEL:
         return this.#resolveLabel(token);
       case TokenType.IDENTIFIER:
@@ -1055,6 +1126,44 @@ class Assembler {
 
     this.#token = token;
     return token.type === TokenType.ERROR ? token : null;
+  }
+
+  /* Resolves an immediate value */
+  #resolveImmediate(token) {
+    const value = token.lexeme;
+    if (typeof value === "number") {
+      return token;
+    }
+
+    const label = value.label;
+    const type = value.type;
+
+    if (this.#labels.has(label)) {
+      const addr = this.#labels.get(label);
+      if (type === LABEL_LSB) {
+        token.lexeme = addr & 0xff;
+      } else {
+        token.lexeme = (addr >> 8) & 0xff;
+      }
+
+      return token;
+    }
+
+    const labelMap =
+      type === LABEL_LSB
+        ? this.#unresolvedLsbLabels
+        : this.#unresolvedMsbLabels;
+
+    const addr = this.#pos;
+    if (labelMap.has(label)) {
+      const labels = labelMap.get(label);
+      labels.push(addr);
+    } else {
+      labelMap.set(label, [addr]);
+    }
+
+    token.lexeme = 0;
+    return token;
   }
 
   /* Resolves a label's address, if possible */

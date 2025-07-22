@@ -317,7 +317,7 @@ class FrameVM {
   /* Called every frame */
   runCallback() {
     const target = this.#clock + CYCLES_PER_FRAME;
-    while (this.#clock < target) {
+    while (this.#clock < target && this.#running) {
       this.cycle();
     }
   }
@@ -606,9 +606,7 @@ class FrameVM {
         this.setMemory(p, A);
       },
       [Opcode.MOV_PK]: () => {
-        const [p, k] = this.#getArgsAK();
-
-        console.log("MOV_PK", this.getPC(), p, k);
+        const [p, k] = this.#getArgsPK();
         this.setMemory(p, k);
       },
       [Opcode.JMP_PA]: () => {
@@ -892,8 +890,8 @@ class FrameVM {
     for (let i = 0; i < REG_COUNT; i++) {
       const p = analyserRegisters[i];
 
-      const rV = this.getRegister(i).toString().padStart(2, "0");
-      const rN = i.toString().padStart(2, "0");
+      const rV = this.getRegister(i).toString(16).padStart(2, "0");
+      const rN = i.toString(16).padStart(2, "0");
       p.innerText = `\$${rN}: ${rV}`;
     }
 
