@@ -13,7 +13,8 @@ const FRAME_CANVAS_H = FRAME_WIN_H * FRAME_CANVAS_SCALE;
 
 const MEMORY_SIZE = 0xffff + 1;
 
-const RUN_INTERVAL = 0;
+const RUN_INTERVAL = 16.777; /* Roughly 60FPS */
+const CYCLES_PER_FRAME = 100;
 
 const KERNEL_START_ADDR = 0xe000;
 const TXT_CURSOR_POS = 0xe7bf;
@@ -313,8 +314,16 @@ class FrameVM {
     this.#runID = setInterval(this.runCallback.bind(this), RUN_INTERVAL);
   }
 
-  /* Executes a single instruction */
+  /* Called every frame */
   runCallback() {
+    const target = this.#clock + CYCLES_PER_FRAME;
+    while (this.#clock < target) {
+      this.cycle();
+    }
+  }
+
+  /* Executes a single CPU cycle */
+  cycle() {
     if (this.#needsInterrupt) {
       this.#draw();
       this.#triggerInterrupt();
