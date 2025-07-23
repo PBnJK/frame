@@ -82,54 +82,77 @@ const Opcode = {
   OR_AB: 0x23,
   OR_AK: 0x24,
 
+  /* XOR family */
+  XOR_ABC: 0x25,
+  XOR_ABK: 0x26,
+  XOR_AB: 0x27,
+  XOR_AK: 0x28,
+
   /* NOT family */
-  NOT_AB: 0x25,
-  NOT_AK: 0x26,
-  NOT_A: 0x27,
-  NOT_O: 0x28,
+  NOT_AB: 0x29,
+  NOT_AK: 0x2a,
+  NOT_A: 0x2b,
+  NOT_O: 0x2c,
 
   /* LSH family */
-  LSH_AB: 0x29,
-  LSH_AK: 0x2a,
-  LSH_A: 0x2b,
+  LSH_ABC: 0x2d,
+  LSH_ABK: 0x2e,
+  LSH_AB: 0x2f,
+  LSH_AK: 0x30,
+  LSH_A: 0x31,
 
   /* RSH family */
-  RSH_AB: 0x2c,
-  RSH_AK: 0x2d,
-  RSH_A: 0x2e,
+  RSH_ABC: 0x32,
+  RSH_ABK: 0x33,
+  RSH_AB: 0x34,
+  RSH_AK: 0x35,
+  RSH_A: 0x36,
+
+  /* ROL family */
+  ROL_A: 0x37,
+  ROL_K: 0x38,
+  ROL_P: 0x39,
+
+  /* ROR family */
+  ROR_A: 0x3a,
+  ROR_K: 0x3b,
+  ROR_P: 0x3c,
 
   /* ADD family */
-  ADD_ABC: 0x2f,
-  ADD_ABK: 0x30,
-  ADD_AB: 0x31,
-  ADD_AK: 0x32,
+  ADD_ABC: 0x3d,
+  ADD_ABK: 0x3e,
+  ADD_AB: 0x3f,
+  ADD_AK: 0x40,
 
   /* INC family */
-  INC_A: 0x33,
-  INC_P: 0x34,
+  INC_A: 0x41,
+  INC_P: 0x42,
 
   /* DEC family */
-  DEC_A: 0x35,
-  DEC_P: 0x36,
+  DEC_A: 0x43,
+  DEC_P: 0x44,
 
   /* CALL family */
-  CALL_P: 0x37,
+  CALL_P: 0x45,
 
   /* RET family */
-  RET_O: 0x38,
+  RET_O: 0x46,
 
   /* PUSH family */
-  PUSH_A: 0x39,
-  PUSH_K: 0x3a,
+  PUSH_A: 0x47,
+  PUSH_K: 0x48,
 
   /* POP family */
-  POP_A: 0x3b,
-  POP_O: 0x3c,
+  POP_A: 0x49,
+  POP_O: 0x4a,
 
   /* SEI family */
-  SEI_A: 0x3d,
-  SEI_K: 0x3e,
-  SEI_O: 0x3f,
+  SEI_A: 0x4b,
+  SEI_K: 0x4c,
+  SEI_O: 0x4d,
+
+  /* CHY family */
+  CHY_O: 0x4e,
 };
 
 const Mode = {
@@ -351,11 +374,13 @@ class Assembler {
   /* Initializes the map that matches a mnemonic to its opcode */
   #initOpMap() {
     this.#opMap = new Map();
+
     this.#opMap.set("hlt", {
       [Mode.A]: Opcode.HLT_A,
       [Mode.K]: Opcode.HLT_K,
       [Mode.O]: Opcode.HLT_O,
     });
+
     this.#opMap.set("mov", {
       [Mode.APB]: Opcode.MOV_APB,
       [Mode.APK]: Opcode.MOV_APK,
@@ -371,86 +396,129 @@ class Assembler {
       [Mode.PA]: Opcode.MOV_PA,
       [Mode.PK]: Opcode.MOV_PK,
     });
+
     this.#opMap.set("jmp", {
       [Mode.PA]: Opcode.JMP_PA,
       [Mode.PK]: Opcode.JMP_PK,
       [Mode.P]: Opcode.JMP_P,
     });
+
     this.#opMap.set("brt", {
       [Mode.PA]: Opcode.BRT_PA,
       [Mode.PK]: Opcode.BRT_PK,
       [Mode.P]: Opcode.BRT_P,
     });
+
     this.#opMap.set("brf", {
       [Mode.PA]: Opcode.BRF_PA,
       [Mode.PK]: Opcode.BRF_PK,
       [Mode.P]: Opcode.BRF_P,
     });
+
     this.#opMap.set("equ", {
       [Mode.AB]: Opcode.EQU_AB,
       [Mode.AK]: Opcode.EQU_AK,
     });
+
     this.#opMap.set("lss", {
       [Mode.AB]: Opcode.LSS_AB,
       [Mode.AK]: Opcode.LSS_AK,
     });
+
     this.#opMap.set("and", {
       [Mode.ABC]: Opcode.AND_ABC,
       [Mode.ABK]: Opcode.AND_ABK,
       [Mode.AB]: Opcode.AND_AB,
       [Mode.AK]: Opcode.AND_AK,
     });
+
     this.#opMap.set("or", {
       [Mode.ABC]: Opcode.OR_ABC,
       [Mode.ABK]: Opcode.OR_ABK,
       [Mode.AB]: Opcode.OR_AB,
       [Mode.AK]: Opcode.OR_AK,
     });
-    this.#opMap.set("lsh", {
-      [Mode.AB]: Opcode.LSH_AB,
-      [Mode.AK]: Opcode.LSH_AK,
-      [Mode.A]: Opcode.LSH_A,
+
+    this.#opMap.set("xor", {
+      [Mode.ABC]: Opcode.XOR_ABC,
+      [Mode.ABK]: Opcode.XOR_ABK,
+      [Mode.AB]: Opcode.XOR_AB,
+      [Mode.AK]: Opcode.XOR_AK,
     });
-    this.#opMap.set("rsh", {
-      [Mode.AB]: Opcode.RSH_AB,
-      [Mode.AK]: Opcode.RSH_AK,
-      [Mode.A]: Opcode.RSH_A,
-    });
+
     this.#opMap.set("not", {
       [Mode.AB]: Opcode.NOT_AB,
       [Mode.AK]: Opcode.NOT_AK,
       [Mode.A]: Opcode.NOT_A,
       [Mode.O]: Opcode.NOT_O,
     });
+
+    this.#opMap.set("lsh", {
+      [Mode.ABC]: Opcode.LSH_ABC,
+      [Mode.ABK]: Opcode.LSH_ABK,
+      [Mode.AB]: Opcode.LSH_AB,
+      [Mode.AK]: Opcode.LSH_AK,
+      [Mode.A]: Opcode.LSH_A,
+    });
+
+    this.#opMap.set("rsh", {
+      [Mode.ABC]: Opcode.RSH_ABC,
+      [Mode.ABK]: Opcode.RSH_ABK,
+      [Mode.AB]: Opcode.RSH_AB,
+      [Mode.AK]: Opcode.RSH_AK,
+      [Mode.A]: Opcode.RSH_A,
+    });
+
+    this.#opMap.set("rol", {
+      [Mode.A]: Opcode.ROL_A,
+      [Mode.K]: Opcode.ROL_K,
+      [Mode.P]: Opcode.ROL_P,
+    });
+
+    this.#opMap.set("ror", {
+      [Mode.A]: Opcode.ROR_A,
+      [Mode.K]: Opcode.ROR_K,
+      [Mode.P]: Opcode.ROR_P,
+    });
+
     this.#opMap.set("add", {
       [Mode.ABC]: Opcode.ADD_ABC,
       [Mode.ABK]: Opcode.ADD_ABK,
       [Mode.AB]: Opcode.ADD_AB,
       [Mode.AK]: Opcode.ADD_AK,
     });
+
     this.#opMap.set("inc", {
       [Mode.A]: Opcode.INC_A,
       [Mode.P]: Opcode.INC_P,
     });
+
     this.#opMap.set("dec", {
       [Mode.A]: Opcode.DEC_A,
       [Mode.P]: Opcode.DEC_P,
     });
+
     this.#opMap.set("call", { [Mode.P]: Opcode.CALL_P });
+
     this.#opMap.set("ret", { [Mode.O]: Opcode.RET_O });
+
     this.#opMap.set("push", {
       [Mode.A]: Opcode.PUSH_A,
       [Mode.K]: Opcode.PUSH_K,
     });
+
     this.#opMap.set("pop", {
       [Mode.A]: Opcode.POP_A,
       [Mode.O]: Opcode.POP_O,
     });
+
     this.#opMap.set("sei", {
       [Mode.A]: Opcode.SEI_A,
       [Mode.K]: Opcode.SEI_K,
       [Mode.O]: Opcode.SEI_O,
     });
+
+    this.#opMap.set("chy", { [Mode.O]: Opcode.CHY_O });
 
     this.#modeMap = new Map();
     for (const objs of this.#opMap.values()) {

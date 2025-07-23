@@ -264,6 +264,8 @@ const Flag = {
   CONDITIONAL: Symbol("Conditional"),
   CARRY: Symbol("Carry"),
   INTERRUPT: Symbol("Interrupt"),
+  ZERO: Symbol("Zero"),
+  NEGATIVE: Symbol("Negative"),
 };
 
 /* The main FRAME VM class
@@ -294,9 +296,9 @@ class FrameVM {
   constructor() {
     this.#initCanvas();
     this.#initKeyboard();
+    this.#initFlags();
     this.#initRegisters();
     this.#initMemory();
-    this.#initFlags();
     this.#initInstructions();
     this.#initKernel();
     this.#initFont();
@@ -410,7 +412,9 @@ class FrameVM {
 
   /* Sets a value in memory */
   setMemory(addr, to) {
-    this.#memory[addr] = to;
+    const V = to & 0xff;
+    this.#memory[addr] = V;
+    this.#updateZeroAndNegative(V);
   }
 
   /* Sets a 16-bit value in memory */
@@ -442,7 +446,9 @@ class FrameVM {
       to = 0;
     }
 
-    this.#registers[r] = to & 0xff;
+    const V = to & 0xff;
+    this.#registers[r] = V;
+    this.#updateZeroAndNegative(V);
   }
 
   /* Returns the contents of register @r */
@@ -482,7 +488,8 @@ class FrameVM {
 
   /* Pushes a value to the stack */
   pushToStack(value) {
-    this.setMemory(this.getSP(), value);
+    const addr = 0x0100 + this.getSP();
+    this.setMemory(addr, value);
 
     const sp = this.getRegister(SP);
     this.setRegister(SP, sp + 1);
@@ -502,7 +509,8 @@ class FrameVM {
     const sp = this.getRegister(SP);
     this.setRegister(SP, sp - 1);
 
-    return this.getMemory(this.getSP());
+    const addr = 0x0100 + this.getSP();
+    return this.getMemory(addr);
   }
 
   /* Pops a 16-bit value from the stack */
@@ -872,43 +880,35 @@ class FrameVM {
         const OR = A | k;
         this.setRegister(a, OR);
       },
-      [Opcode.LSH_AB]: () => {
+      [Opcode.XOR_ABC]: () => {
+        const [a, b, c] = this.#getArgsABC();
+        const B = this.getRegister(b);
+        const C = this.getRegister(c);
+
+        const XOR = B ^ C;
+        this.setRegister(a, XOR);
+      },
+      [Opcode.XOR_ABK]: () => {
+        const [a, b, k] = this.#getArgsABK();
+        const B = this.getRegister(b);
+
+        const XOR = B ^ k;
+        this.setRegister(a, XOR);
+      },
+      [Opcode.XOR_AB]: () => {
         const [a, b] = this.#getArgsAB();
         const A = this.getRegister(a);
         const B = this.getRegister(b);
 
-        this.setRegister(a, A << B);
+        const XOR = A ^ B;
+        this.setRegister(a, XOR);
       },
-      [Opcode.LSH_AK]: () => {
+      [Opcode.XOR_AK]: () => {
         const [a, k] = this.#getArgsAK();
         const A = this.getRegister(a);
 
-        this.setRegister(a, A << k);
-      },
-      [Opcode.LSH_A]: () => {
-        const a = this.#getArgsA();
-        const A = this.getRegister(a);
-
-        this.setRegister(a, A << 1);
-      },
-      [Opcode.RSH_AB]: () => {
-        const [a, b] = this.#getArgsAB();
-        const A = this.getRegister(a);
-        const B = this.getRegister(b);
-
-        this.setRegister(a, A >> B);
-      },
-      [Opcode.RSH_AK]: () => {
-        const [a, k] = this.#getArgsAK();
-        const A = this.getRegister(a);
-
-        this.setRegister(a, A >> k);
-      },
-      [Opcode.RSH_A]: () => {
-        const a = this.#getArgsA();
-        const A = this.getRegister(a);
-
-        this.setRegister(a, A >> 1);
+        const XOR = A ^ k;
+        this.setRegister(a, XOR);
       },
       [Opcode.NOT_AB]: () => {
         const [a, b] = this.#getArgsAB();
@@ -930,6 +930,164 @@ class FrameVM {
       [Opcode.NOT_O]: () => {
         const C = this.getFlag(Flag.CONDITIONAL) === 0 ? 1 : 0;
         this.setFlag(Flag.CONDITIONAL, C);
+      },
+      [Opcode.ROL_A]: () => {
+        const a = this.#getArgsA();
+        const carry = this.getFlag(Flag.CARRY);
+
+        let A = this.getRegister(a);
+        this.setFlag(Flag.CARRY, (A >> 7) & 1);
+
+        A = (A << 1) & 0xff;
+        if (carry) {
+          A |= 1;
+        }
+
+        this.setRegister(a, A);
+      },
+      [Opcode.ROL_K]: () => {
+        const k = this.#getArgsK();
+        const carry = this.getFlag(Flag.CARRY);
+
+        let K = this.getMemory(k);
+        this.setFlag(Flag.CARRY, (K >> 7) & 1);
+
+        K = (K << 1) & 0xff;
+        if (carry) {
+          K |= 1;
+        }
+
+        this.setMemory(k, K);
+      },
+      [Opcode.ROL_P]: () => {
+        const p = this.#getArgsP();
+        const carry = this.getFlag(Flag.CARRY);
+
+        let P = this.getMemory(p);
+        this.setFlag(Flag.CARRY, (P >> 7) & 1);
+
+        P = (P << 1) & 0xff;
+        if (carry) {
+          P |= 1;
+        }
+
+        this.setMemory(p, P);
+      },
+      [Opcode.ROR_A]: () => {
+        const a = this.#getArgsA();
+        const carry = this.getFlag(Flag.CARRY);
+
+        let A = this.getRegister(a);
+        this.setFlag(Flag.CARRY, A & 1);
+
+        A >>= 1;
+        if (carry) {
+          A |= 1 << 7;
+        }
+
+        this.setRegister(a, A);
+      },
+      [Opcode.ROR_K]: () => {
+        const k = this.#getArgsK();
+        const carry = this.getFlag(Flag.CARRY);
+
+        let K = this.getMemory(k);
+        this.setFlag(Flag.CARRY, K & 1);
+
+        K >>= 1;
+        if (carry) {
+          K |= 1 << 7;
+        }
+
+        this.setMemory(k, K);
+      },
+      [Opcode.ROR_P]: () => {
+        const p = this.#getArgsP();
+        const carry = this.getFlag(Flag.CARRY);
+
+        let P = this.getMemory(p);
+        this.setFlag(Flag.CARRY, P & 1);
+
+        P >>= 1;
+        if (carry) {
+          P |= 1 << 7;
+        }
+
+        this.setMemory(p, P);
+      },
+      [Opcode.LSH_ABC]: () => {
+        const [a, b, c] = this.#getArgsABC();
+        const B = this.getRegister(b);
+        const C = this.getRegister(c);
+
+        this.setFlag(Flag.CARRY, B > 127 ? 1 : 0);
+        this.setRegister(a, B << C);
+      },
+      [Opcode.LSH_ABK]: () => {
+        const [a, b, k] = this.#getArgsABK();
+        const B = this.getRegister(b);
+
+        this.setFlag(Flag.CARRY, B > 127 ? 1 : 0);
+        this.setRegister(a, B << k);
+      },
+      [Opcode.LSH_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const A = this.getRegister(a);
+        const B = this.getRegister(b);
+
+        this.setFlag(Flag.CARRY, A > 127 ? 1 : 0);
+        this.setRegister(a, A << B);
+      },
+      [Opcode.LSH_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        const A = this.getRegister(a);
+
+        this.setFlag(Flag.CARRY, A > 127 ? 1 : 0);
+        this.setRegister(a, A << k);
+      },
+      [Opcode.LSH_A]: () => {
+        const a = this.#getArgsA();
+        const A = this.getRegister(a);
+
+        this.setFlag(Flag.CARRY, A > 127 ? 1 : 0);
+        this.setRegister(a, A << 1);
+      },
+      [Opcode.RSH_ABC]: () => {
+        const [a, b, c] = this.#getArgsABC();
+        const B = this.getRegister(b);
+        const C = this.getRegister(c);
+
+        this.setFlag(Flag.CARRY, B & 1);
+        this.setRegister(a, B >> C);
+      },
+      [Opcode.RSH_ABK]: () => {
+        const [a, b, k] = this.#getArgsABK();
+        const B = this.getRegister(b);
+
+        this.setFlag(Flag.CARRY, B & 1);
+        this.setRegister(a, B >> k);
+      },
+      [Opcode.RSH_AB]: () => {
+        const [a, b] = this.#getArgsAB();
+        const A = this.getRegister(a);
+        const B = this.getRegister(b);
+
+        this.setFlag(Flag.CARRY, A & 1);
+        this.setRegister(a, A >> B);
+      },
+      [Opcode.RSH_AK]: () => {
+        const [a, k] = this.#getArgsAK();
+        const A = this.getRegister(a);
+
+        this.setFlag(Flag.CARRY, A & 1);
+        this.setRegister(a, A >> k);
+      },
+      [Opcode.RSH_A]: () => {
+        const a = this.#getArgsA();
+        const A = this.getRegister(a);
+
+        this.setFlag(Flag.CARRY, A & 1);
+        this.setRegister(a, A >> 1);
       },
       [Opcode.ADD_ABC]: () => {
         const [a, b, c] = this.#getArgsABC();
@@ -1031,6 +1189,10 @@ class FrameVM {
       [Opcode.SEI_O]: () => {
         this.setFlag(Flag.INTERRUPT, 1);
       },
+      [Opcode.CHY_O]: () => {
+        const carry = this.getFlag(Flag.CARRY);
+        this.setFlag(Flag.CONDITIONAL, carry);
+      },
     };
 
     Object.keys(this.#instructions).forEach((k) =>
@@ -1128,6 +1290,14 @@ class FrameVM {
 
     const addr = this.getMemory16(INT_START_ADDR);
     this.setPC(addr);
+  }
+
+  /* Updates the zero and negative flags based on a value */
+  #updateZeroAndNegative(v) {
+    this.setFlag(Flag.ZERO, v === 0 ? 0 : 1);
+
+    const SIGN = (v >> 7) & 1;
+    this.setFlag(Flag.NEGATIVE, SIGN);
   }
 
   /* Gets register A from the arguments */

@@ -19,8 +19,10 @@
 
 ## Instruction Set
 ### hlt
-Halts execution
-- hlt: Halts execution
+Halts execution or emits syscall
+- hlt:     Halts execution
+- hlt [a]: Emits the syscall that corresponds to the value in register [a]
+- hlt [k]: Emits the syscall that corresponds to value [k]
 
 ### mov
 Moves a value from one place to another
@@ -94,6 +96,32 @@ Negates (!a) a value, so that zero becomes one, and non-zero values become zero
 - not [a], [k]: Negates value [k] and stores the result in register [a]
 - not [a]:      Negates the conditional flag and stores the result in register [a]
 - not:          Negates the conditional flag
+
+### lsh
+Shifts a value's bits left by some amount (a << k)
+- lsh [a], [b], [c]: Left-shifts the bits of the value in register [b] by the value
+                     in register [c] and stores the result in register [a]
+- lsh [a], [b], [k]: Left-shifts the bits of the value in register [b] by value [k]
+                     and stores the result in register [a]
+- lsh [a], [b]:      Left-shifts the bits of the value in register [a] in-place by
+                     the value in register [c]
+- lsh [a], [k]:      Left-shifts the bits of the value in register [a] in-place by
+                     value [k]
+- lsh [a]:           Left-shifts the bits of the value in register [a] in-place by
+                     one (shorter version of lsh [a], 1)
+
+### rsh
+Shifts a value's bits right by some amount (a >> k)
+- rsh [a], [b], [c]: Right-shifts the bits of the value in register [b] by the value
+                     in register [c] and stores the result in register [a]
+- rsh [a], [b], [k]: Right-shifts the bits of the value in register [b] by value [k]
+                     and stores the result in register [a]
+- rsh [a], [b]:      Right-shifts the bits of the value in register [a] in-place by
+                     the value in register [c]
+- rsh [a], [k]:      Right-shifts the bits of the value in register [a] in-place by
+                     value [k]
+- rsh [a]:           Right-shifts the bits of the value in register [a] in-place by
+                     one (shorter version of rsh [a], 1)
 
 ### add
 Adds two values

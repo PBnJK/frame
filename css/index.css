@@ -13,7 +13,7 @@
   gap: 8px;
 
   width: 640px;
-  height: 704px;
+  height: 822px;
 }
 
 .region-title {
@@ -55,6 +55,7 @@
 }
 
 #analyser-container {
+  width: 400px;
 }
 
 #analyser-register-container {
