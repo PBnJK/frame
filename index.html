@@ -29,7 +29,10 @@
         <div class="region-container" id="runner-container">
           <div id="runner-controls">
             <button id="runner-run-button" type="">Run</button>
+            <button id="runner-asm-button" type="">Assemble</button>
             <button id="runner-stop-button" type="">Stop</button>
+            <button id="runner-pause-button" type="">Pause</button>
+            <button id="runner-step-button" type="">Step</button>
           </div>
           <canvas id="runner-canvas"></canvas>
         </div>
@@ -41,38 +44,39 @@
             <legend>Registers</legend>
             <div id="analyser-register-container">
               <div class="analyser-sub-container">
-                <p class="analyser-field" id="analyser-pc">pc : 0</p>
-                <p class="analyser-field" id="analyser-sp">sp : 0</p>
+                <p class="analyser-field" id="analyser-pc">pc: 0</p>
+                <p class="analyser-field" id="analyser-sp">sp: 0</p>
               </div>
               <div class="analyser-sub-container">
-                <p class="analyser-field" id="analyser-r0">r0 : 0</p>
-                <p class="analyser-field" id="analyser-r1">r1 : 0</p>
-                <p class="analyser-field" id="analyser-r2">r2 : 0</p>
-                <p class="analyser-field" id="analyser-r3">r3 : 0</p>
-                <p class="analyser-field" id="analyser-r4">r4 : 0</p>
-                <p class="analyser-field" id="analyser-r5">r5 : 0</p>
-                <p class="analyser-field" id="analyser-r6">r6 : 0</p>
-                <p class="analyser-field" id="analyser-r7">r7 : 0</p>
+                <p class="analyser-field" id="analyser-r0">$0: 0</p>
+                <p class="analyser-field" id="analyser-r1">$1: 0</p>
+                <p class="analyser-field" id="analyser-r2">$2: 0</p>
+                <p class="analyser-field" id="analyser-r3">$3: 0</p>
+                <p class="analyser-field" id="analyser-r4">$4: 0</p>
+                <p class="analyser-field" id="analyser-r5">$5: 0</p>
+                <p class="analyser-field" id="analyser-r6">$6: 0</p>
+                <p class="analyser-field" id="analyser-r7">$7: 0</p>
               </div>
               <div class="analyser-sub-container">
-                <p class="analyser-field" id="analyser-r8">r8 : 0</p>
-                <p class="analyser-field" id="analyser-r9">r9 : 0</p>
-                <p class="analyser-field" id="analyser-r10">r10 : 0</p>
-                <p class="analyser-field" id="analyser-r11">r11 : 0</p>
-                <p class="analyser-field" id="analyser-r12">r12 : 0</p>
-                <p class="analyser-field" id="analyser-r13">r13 : 0</p>
-                <p class="analyser-field" id="analyser-r14">r14 : 0</p>
-                <p class="analyser-field" id="analyser-r15">r15 : 0</p>
+                <p class="analyser-field" id="analyser-r8">$8: 0</p>
+                <p class="analyser-field" id="analyser-r9">$9: 0</p>
+                <p class="analyser-field" id="analyser-ra">$a: 0</p>
+                <p class="analyser-field" id="analyser-rb">$b: 0</p>
+                <p class="analyser-field" id="analyser-rc">$c: 0</p>
+                <p class="analyser-field" id="analyser-rd">$d: 0</p>
+                <p class="analyser-field" id="analyser-re">$e: 0</p>
+                <p class="analyser-field" id="analyser-rf">$f: 0</p>
               </div>
             </div>
           </fieldset>
 
           <fieldset>
-            <legend>Registers</legend>
+            <legend>Flags</legend>
             <div id="analyser-flags-container">
-              <p class="analyser-field" id="analyser-flag-cond">Co : 0</p>
-              <p class="analyser-field" id="analyser-flag-carry">Ca : 0</p>
-              <p class="analyser-field" id="analyser-flag-int">In : 0</p>
+              <p class="analyser-field" id="analyser-flag-carry">C: 0</p>
+              <p class="analyser-field" id="analyser-flag-int">I: 0</p>
+              <p class="analyser-field" id="analyser-flag-zero">Z: 0</p>
+              <p class="analyser-field" id="analyser-flag-neg">N: 0</p>
             </div>
           </fieldset>
 

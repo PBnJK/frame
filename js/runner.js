@@ -17,6 +17,7 @@ const MEMORY_SIZE = 0xffff + 1;
 
 const RUN_INTERVAL = 16.777; /* Roughly 60FPS */
 const CYCLES_PER_FRAME = 240;
+const CYCLES_PER_INTERRUPT = Math.floor(CYCLES_PER_FRAME * 4);
 
 const KERNEL_START_ADDR = 0xe000;
 const INPUT_DATA_ADDR = 0xe700;
@@ -43,48 +44,70 @@ const KERNEL_SRC = `# The FRAME Kernel
 
 .addr 0xe000
 
-# == INPUT ==
-@kinp_get
-  sei $0      # Critical section (no interrupts)
-  sei         # Exit critical section
-  ret
-
 # == TEXT MODE ==
 
+# Moves the cursor X position
+#   $8 : Position to move to
+#
+# Uses register $e
+@ktxt_move_x
+  mov $e, %e7bf      # Get cursor position
+  and $e, 0b11111000 # Mask out X position
+  and $8, 0b111      # Mask X position
+  or $e, $8          # Set X position
+  mov %e7bf, $e      # Save cursor position
+  ret
+
+# Moves the cursor Y position
+#   $8 : Position to move to
+#
+# Uses register $e
+@ktxt_move_y
+  mov $e, %e7bf      # Get cursor position
+  and $e, 0b11000111 # Mask out cursor Y position
+  and $8, 0b111      # Mask the new Y position
+  lsh $8, 3          # Shift the new Y position into place
+  or $e, $8          # Update cursor Y position
+  mov %e7bf, $e      # Save cursor position
+  ret
+
 # Clears the screen, leaving the cursor at the top-left
+#
 # Uses register $e
 @ktxt_clear
-  sei $0              # Critical section (no interrupts)
-  mov %e7bf, $0       # Set the cursor to the top-left
-  push $8             # Save register $8 on the stack
-  mov $8, ' '         # Load $8 with the space character
-  @_loop
-    call @ktxt_putch  # Draw the character
-    equ $e, $0       # Has cursor looped back to start?
-    brf @_loop        # If it hasn't, loop
-  pop $8              # Restore register $8
-  sei                 # Exit critical section
+  sei $0                  # Critical section (no interrupts)
+  mov %e7bf, $0           # Set the cursor to the top-left
+  push $8                 # Save register $8 on the stack
+  mov $8, ' '             # Load $8 with the space character
+  @_ktxt_clear_loop
+    call @ktxt_putch      # Draw the character
+    equ $e, $0            # Has cursor looped back to start?
+    brf @_ktxt_clear_loop # If it hasn't, loop
+  pop $8                  # Restore register $8
+  sei                     # Exit critical section
   ret
 
 # Prints a null-terminated string to the screen
-# $8 : LSB of the text address
-# $9 : MSB of the text address
+#   $8 : LSB of the text address
+#   $9 : MSB of the text address
+#
+# Uses register $e
 @ktxt_print
-  sei $0               # Critical section (no interrupts)
-  mov $e, $0           # Start at index 0
-  mov 0xfe, $8         # Save LSB to %00fe
-  mov 0xff, $9         # Save MSB to %00ff
-  @_loop
-    mov $8, (0xfe), $e # Get character
-    equ $8, $0         # Is null-terminator?
-    brt @_ktxt_print_f # If so, exit
-    push $e            # Saves the index
-    call @ktxt_putch   # Draw the character
-    pop $e             # Restores the index
-    inc $e             # Advances the index
-    jmp @_loop         # Loop
+  sei $0                  # Critical section (no interrupts)
+  mov $e, $0              # Start at index 0
+  mov 0xfe, $8            # Save LSB to %00fe
+  mov 0xff, $9            # Save MSB to %00ff
+  @_ktxt_print_loop
+    mov $8, (0xfe), $e    # Get character
+    equ $8, $0            # Is null-terminator?
+    brt @_ktxt_print_f    # If so, exit
+    push $e               # Saves the index
+    call @ktxt_putch      # Draw the character
+    pop $e                # Restores the index
+    inc $e                # Advances the index
+    jmp @_ktxt_print_loop # Loop
   @_ktxt_print_f
-    sei                 # Exit critical section
+    sei                   # Exit critical section
     ret
 
 # Prints a character to the screen, advancing the cursor
@@ -246,22 +269,22 @@ const analyserRegisters = [
   document.getElementById("analyser-r7"),
   document.getElementById("analyser-r8"),
   document.getElementById("analyser-r9"),
-  document.getElementById("analyser-r10"),
-  document.getElementById("analyser-r11"),
-  document.getElementById("analyser-r12"),
-  document.getElementById("analyser-r13"),
-  document.getElementById("analyser-r14"),
-  document.getElementById("analyser-r15"),
+  document.getElementById("analyser-ra"),
+  document.getElementById("analyser-rb"),
+  document.getElementById("analyser-rc"),
+  document.getElementById("analyser-rd"),
+  document.getElementById("analyser-re"),
+  document.getElementById("analyser-rf"),
 ];
 
-const analyserFlagConditional = document.getElementById("analyser-flag-cond");
 const analyserFlagCarry = document.getElementById("analyser-flag-carry");
 const analyserFlagInterrupt = document.getElementById("analyser-flag-int");
+const analyserFlagZero = document.getElementById("analyser-flag-zero");
+const analyserFlagNegative = document.getElementById("analyser-flag-neg");
 
 const analyserState = document.getElementById("analyser-state");
 
 const Flag = {
-  CONDITIONAL: Symbol("Conditional"),
   CARRY: Symbol("Carry"),
   INTERRUPT: Symbol("Interrupt"),
   ZERO: Symbol("Zero"),
@@ -282,11 +305,13 @@ class FrameVM {
   #input;
 
   #clock;
+  #cyclesSinceInterrupt;
   #needsInterrupt;
 
   #memory;
 
   #running;
+  #paused;
   #runID;
 
   #instructions;
@@ -302,6 +327,8 @@ class FrameVM {
     this.#initInstructions();
     this.#initKernel();
     this.#initFont();
+
+    this.#paused = false;
 
     this.reset();
   }
@@ -325,8 +352,9 @@ class FrameVM {
     }
 
     /* Setup reset vector */
-    const lo = main & 0xff;
-    const hi = (main >> 8) & 0xff;
+    const u = main >>> 0;
+    const lo = u & 0xff;
+    const hi = (u >> 8) & 0xff;
     this.setMemory16(ROM_START_ADDR, lo, hi);
   }
 
@@ -340,26 +368,76 @@ class FrameVM {
     this.#runID = setInterval(this.runCallback.bind(this), RUN_INTERVAL);
   }
 
-  /* Called every frame */
-  runCallback() {
-    const target = this.#clock + CYCLES_PER_FRAME;
-    while (this.#clock < target && this.#running) {
-      this.cycle();
+  /* Stops the execution of the current program */
+  stop() {
+    if (!this.#running) {
+      return;
     }
 
-    if (this.getFlag(Flag.INTERRUPT)) {
+    this.#running = false;
+
+    analyserState.innerText = "Stopped";
+
+    clearInterval(this.#runID);
+    this.#runID = -1;
+  }
+
+  /* Pauses/unpauses the execution of the current program */
+  pause() {
+    if (this.#running) {
+      this.#paused = true;
+      this.stop();
+    } else {
+      this.#paused = false;
+      this.#running = true;
+      analyserState.innerText = "Running...";
+
+      this.#runID = setInterval(this.runCallback.bind(this), RUN_INTERVAL);
+    }
+  }
+
+  /* Steps through a single instruction */
+  step() {
+    if (!this.#running && !this.#paused) {
+      this.#running = true;
+      this.pause();
+      this.setPC(this.getMemory16(ROM_START_ADDR));
+    } else if (!this.#paused) {
+      this.pause();
+    }
+
+    this.cycle();
+    if (this.#clock % CYCLES_PER_INTERRUPT === 0) {
       this.#draw();
       this.#triggerInterrupt();
     }
   }
 
+  /* Returns if the program is stopped */
+  isProgramPaused() {
+    return this.#paused;
+  }
+
+  /* Called every frame */
+  runCallback() {
+    const target = this.#clock + CYCLES_PER_FRAME;
+    while (this.#running && this.#clock < target) {
+      if (
+        this.#cyclesSinceInterrupt === CYCLES_PER_INTERRUPT &&
+        this.getFlag(Flag.INTERRUPT)
+      ) {
+        this.#draw();
+        this.#triggerInterrupt();
+        this.#cyclesSinceInterrupt = 0;
+      }
+
+      this.cycle();
+      this.#cyclesSinceInterrupt++;
+    }
+  }
+
   /* Executes a single CPU cycle */
   cycle() {
-    if (this.#needsInterrupt) {
-      this.#draw();
-      this.#triggerInterrupt();
-    }
-
     this.#updateAnalyser();
 
     const instruction = this.fetchNext();
@@ -369,6 +447,18 @@ class FrameVM {
 
   /* Fetches the next byte */
   fetchNext() {
+    if (this.#pc === 0x30d) {
+      console.log(
+        "=>",
+        this.#memory[this.#pc - 3],
+        this.#memory[this.#pc - 2],
+        this.#memory[this.#pc - 1],
+        this.#memory[this.#pc],
+        this.#memory[this.#pc + 1],
+        this.#memory[this.#pc + 2],
+        this.#memory[this.#pc + 3],
+      );
+    }
     const next = this.getMemory(this.#pc++);
     this.#pc &= 0xffff;
 
@@ -382,6 +472,7 @@ class FrameVM {
     this.stop();
 
     this.#clock = 0;
+    this.#cyclesSinceInterrupt = 1;
     this.#needsInterrupt = false;
 
     for (let i = 0; i < KERNEL_START_ADDR; i++) {
@@ -396,23 +487,9 @@ class FrameVM {
     this.setSP(0);
   }
 
-  /* Stops the execution of the current program */
-  stop() {
-    if (!this.#running) {
-      return;
-    }
-
-    analyserState.innerText = "Stopped";
-
-    clearInterval(this.#runID);
-    this.#runID = -1;
-
-    this.#running = false;
-  }
-
   /* Sets a value in memory */
   setMemory(addr, to) {
-    const V = to & 0xff;
+    const V = (to >>> 0) & 0xff;
     this.#memory[addr] = V;
     this.#updateZeroAndNegative(V);
   }
@@ -446,7 +523,7 @@ class FrameVM {
       to = 0;
     }
 
-    const V = to & 0xff;
+    const V = (to >>> 0) & 0xff;
     this.#registers[r] = V;
     this.#updateZeroAndNegative(V);
   }
@@ -468,7 +545,7 @@ class FrameVM {
 
   /* Sets the program counter */
   setPC(to) {
-    this.#pc = to & 0xffff;
+    this.#pc = (to >>> 0) & 0xffff;
   }
 
   /* Returns the contents of the program counter */
@@ -488,17 +565,18 @@ class FrameVM {
 
   /* Pushes a value to the stack */
   pushToStack(value) {
-    const addr = 0x0100 + this.getSP();
-    this.setMemory(addr, value);
+    const sp = this.getSP();
 
-    const sp = this.getRegister(SP);
-    this.setRegister(SP, sp + 1);
+    const addr = 0x0100 + sp;
+    this.setMemory(addr, value);
+    this.setSP(sp + 1);
   }
 
   /* Pushes a 16-bit value to the stack */
   pushToStack16(value) {
-    const lo = value & 0xff;
-    const hi = (value >> 8) & 0xff;
+    const u = value >>> 0;
+    const lo = u & 0xff;
+    const hi = (u >> 8) & 0xff;
 
     this.pushToStack(hi);
     this.pushToStack(lo);
@@ -506,10 +584,10 @@ class FrameVM {
 
   /* Pops a value from the stack */
   popFromStack() {
-    const sp = this.getRegister(SP);
-    this.setRegister(SP, sp - 1);
+    const sp = this.getSP() - 1;
 
-    const addr = 0x0100 + this.getSP();
+    this.setSP(sp);
+    const addr = 0x0100 + sp;
     return this.getMemory(addr);
   }
 
@@ -518,7 +596,8 @@ class FrameVM {
     const lo = this.popFromStack();
     const hi = this.popFromStack();
 
-    return lo | (hi << 8);
+    const addr = lo | (hi << 8);
+    return addr;
   }
 
   /* Gets kernel compilation info */
@@ -615,9 +694,10 @@ class FrameVM {
   #initFlags() {
     this.#flags = new Map();
 
-    this.setFlag(Flag.CONDITIONAL, 0);
     this.setFlag(Flag.CARRY, 0);
     this.setFlag(Flag.INTERRUPT, 1);
+    this.setFlag(Flag.ZERO, 0);
+    this.setFlag(Flag.NEGATIVE, 0);
   }
 
   /* Initializes the kernel */
@@ -656,7 +736,7 @@ class FrameVM {
         this.#doSyscall(k);
       },
       [Opcode.HLT_O]: () => {
-        this.stop();
+        this.pause();
       },
       [Opcode.MOV_APB]: () => {
         const [a, p, b] = this.#getArgsAPB();
@@ -757,53 +837,55 @@ class FrameVM {
       },
       [Opcode.BRT_PA]: () => {
         const [p, a] = this.#getArgsPA();
-        if (this.getFlag(Flag.CONDITIONAL) !== 0) {
+        if (this.getFlag(Flag.ZERO)) {
           const P = p + a;
           this.setPC(P);
         }
       },
       [Opcode.BRT_PK]: () => {
         const [p, k] = this.#getArgsPK();
-        if (this.getFlag(Flag.CONDITIONAL) !== 0) {
+        if (this.getFlag(Flag.ZERO)) {
           const P = p + k;
           this.setPC(P);
         }
       },
       [Opcode.BRT_P]: () => {
         const p = this.#getArgsP();
-        if (this.getFlag(Flag.CONDITIONAL) !== 0) {
+        if (this.getFlag(Flag.ZERO)) {
           this.setPC(p);
         }
       },
       [Opcode.BRF_PA]: () => {
         const [p, a] = this.#getArgsPA();
-        if (this.getFlag(Flag.CONDITIONAL) === 0) {
+        if (this.getFlag(Flag.ZERO) === 0) {
           const P = p + a;
           this.setPC(P);
         }
       },
       [Opcode.BRF_PK]: () => {
         const [p, k] = this.#getArgsPK();
-        if (this.getFlag(Flag.CONDITIONAL) === 0) {
+        if (this.getFlag(Flag.ZERO) === 0) {
           const P = p + k;
           this.setPC(P);
         }
       },
       [Opcode.BRF_P]: () => {
         const p = this.#getArgsP();
-        if (this.getFlag(Flag.CONDITIONAL) === 0) {
+        if (this.getFlag(Flag.ZERO) === 0) {
           this.setPC(p);
         }
       },
       [Opcode.EQU_AB]: () => {
         const [a, b] = this.#getArgsAB();
         const eq = this.getRegister(a) === this.getRegister(b) ? 1 : 0;
-        this.setFlag(Flag.CONDITIONAL, eq);
+
+        this.setFlag(Flag.ZERO, eq);
       },
       [Opcode.EQU_AK]: () => {
         const [a, k] = this.#getArgsAK();
         const eq = this.getRegister(a) === k ? 1 : 0;
-        this.setFlag(Flag.CONDITIONAL, eq);
+
+        this.setFlag(Flag.ZERO, eq);
       },
       [Opcode.LSS_AB]: () => {
         const [a, b] = this.#getArgsAB();
@@ -811,14 +893,14 @@ class FrameVM {
         const B = this.getRegister(b);
 
         const lss = A < B ? 1 : 0;
-        this.setFlag(Flag.CONDITIONAL, lss);
+        this.setFlag(Flag.ZERO, lss);
       },
       [Opcode.LSS_AK]: () => {
         const [a, k] = this.#getArgsAK();
         const A = this.getRegister(a);
 
         const lss = A < k ? 1 : 0;
-        this.setFlag(Flag.CONDITIONAL, lss);
+        this.setFlag(Flag.ZERO, lss);
       },
       [Opcode.AND_ABC]: () => {
         const [a, b, c] = this.#getArgsABC();
@@ -922,20 +1004,20 @@ class FrameVM {
       },
       [Opcode.NOT_A]: () => {
         const a = this.#getArgsA();
-        const C = this.getFlag(Flag.CONDITIONAL) === 0 ? 1 : 0;
+        const C = this.getFlag(Flag.ZERO) === 0 ? 1 : 0;
 
-        this.setFlag(Flag.CONDITIONAL, C);
+        this.setFlag(Flag.ZERO, C);
         this.setRegister(a, C);
       },
       [Opcode.NOT_O]: () => {
-        const C = this.getFlag(Flag.CONDITIONAL) === 0 ? 1 : 0;
-        this.setFlag(Flag.CONDITIONAL, C);
+        const C = this.getFlag(Flag.ZERO) === 0 ? 1 : 0;
+        this.setFlag(Flag.ZERO, C);
       },
       [Opcode.ROL_A]: () => {
         const a = this.#getArgsA();
         const carry = this.getFlag(Flag.CARRY);
 
-        let A = this.getRegister(a);
+        let A = this.getRegister(a) >>> 0;
         this.setFlag(Flag.CARRY, (A >> 7) & 1);
 
         A = (A << 1) & 0xff;
@@ -949,7 +1031,7 @@ class FrameVM {
         const k = this.#getArgsK();
         const carry = this.getFlag(Flag.CARRY);
 
-        let K = this.getMemory(k);
+        let K = this.getMemory(k) >>> 0;
         this.setFlag(Flag.CARRY, (K >> 7) & 1);
 
         K = (K << 1) & 0xff;
@@ -963,7 +1045,7 @@ class FrameVM {
         const p = this.#getArgsP();
         const carry = this.getFlag(Flag.CARRY);
 
-        let P = this.getMemory(p);
+        let P = this.getMemory(p) >>> 0;
         this.setFlag(Flag.CARRY, (P >> 7) & 1);
 
         P = (P << 1) & 0xff;
@@ -1133,15 +1215,15 @@ class FrameVM {
       },
       [Opcode.DEC_A]: () => {
         const a = this.#getArgsA();
-        const A = this.getRegister(a);
+        const A = this.getRegister(a) - 1;
 
-        this.setRegister(a, A - 1);
+        this.setRegister(a, A >>> 0);
       },
       [Opcode.DEC_P]: () => {
         const p = this.#getArgsP();
-        const P = this.getMemory(p);
+        const P = this.getMemory(p) - 1;
 
-        this.setMemory(p, P - 1);
+        this.setMemory(p, P >>> 0);
       },
       [Opcode.CALL_P]: () => {
         const p = this.#getArgsP();
@@ -1191,7 +1273,7 @@ class FrameVM {
       },
       [Opcode.CHY_O]: () => {
         const carry = this.getFlag(Flag.CARRY);
-        this.setFlag(Flag.CONDITIONAL, carry);
+        this.setFlag(Flag.ZERO, carry);
       },
     };
 
@@ -1209,7 +1291,7 @@ class FrameVM {
       this.setFlag(Flag.CARRY, 0);
     }
 
-    return result & 0xff;
+    return (result >>> 0) & 0xff;
   }
 
   /* Updates the analyser with the internal state of the VM */
@@ -1217,17 +1299,21 @@ class FrameVM {
     for (let i = 0; i < REG_COUNT; i++) {
       const p = analyserRegisters[i];
 
-      const rV = this.getRegister(i).toString(16).padStart(2, "0");
-      const rN = i.toString(16).padStart(2, "0");
+      const rV = this.getRegister(i).toString(16);
+      const rN = i.toString(16);
       p.innerText = `\$${rN}: ${rV}`;
     }
 
-    analyserPC.innerText = `pc : ${this.getPC()}`;
-    analyserSP.innerText = `sp : ${this.getSP()}`;
+    const pc = this.getPC().toString(16);
+    analyserPC.innerText = `pc: ${pc}`;
 
-    analyserFlagConditional.innerText = `Co : ${this.getFlag(Flag.CONDITIONAL)}`;
-    analyserFlagCarry.innerText = `Ca : ${this.getFlag(Flag.CARRY)}`;
-    analyserFlagInterrupt.innerText = `In : ${this.getFlag(Flag.INTERRUPT)}`;
+    const sp = this.getSP().toString(16);
+    analyserSP.innerText = `sp: ${sp}`;
+
+    analyserFlagCarry.innerText = `C: ${this.getFlag(Flag.CARRY)}`;
+    analyserFlagInterrupt.innerText = `I: ${this.getFlag(Flag.INTERRUPT)}`;
+    analyserFlagZero.innerText = `Z: ${this.getFlag(Flag.ZERO)}`;
+    analyserFlagNegative.innerText = `N: ${this.getFlag(Flag.NEGATIVE)}`;
   }
 
   /* Performs a syscall */
@@ -1284,6 +1370,7 @@ class FrameVM {
 
   /* Triggers an interrupt */
   #triggerInterrupt() {
+    console.log("INTERRUPT!", this.#memory[2]);
     this.#needsInterrupt = false;
 
     this.pushToStack16(this.getPC());
@@ -1294,7 +1381,7 @@ class FrameVM {
 
   /* Updates the zero and negative flags based on a value */
   #updateZeroAndNegative(v) {
-    this.setFlag(Flag.ZERO, v === 0 ? 0 : 1);
+    this.setFlag(Flag.ZERO, v === 0 ? 1 : 0);
 
     const SIGN = (v >> 7) & 1;
     this.setFlag(Flag.NEGATIVE, SIGN);
@@ -1445,6 +1532,22 @@ const runProgram = (program) => {
   frameVM.loadProgramAndRun(program);
 };
 
+const loadProgram = (program) => {
+  frameVM.loadProgram(program);
+};
+
 const stopProgram = () => {
   frameVM.stop();
+};
+
+const pauseProgram = () => {
+  frameVM.pause();
+};
+
+const stepProgram = () => {
+  frameVM.step();
+};
+
+const isProgramPaused = () => {
+  return frameVM.isProgramPaused();
 };
