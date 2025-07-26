@@ -8,10 +8,12 @@
 #   $:00  snake position x
 #   $:01  snake position y
 #   $:02  snake direction
-#   $:03  apple position x
-#   $:04  apple position y
-#   $:05  snake length
-#   $:06  snake array start
+#   $:03  snake updated direction
+#   $:04  game state
+#   $:05  apple position x
+#   $:06  apple position y
+#   $:07  snake length
+#   $:08  snake array start
 #
 # Game Logic
 #   If Pressing Left Then
@@ -64,6 +66,10 @@
 @game_state  .byte GAME_STATE_PLAY
 @apple_pos_x .byte 4
 @apple_pos_y .byte 4
+@snake_len   .byte 3
+@snake_test0 .byte BUTTON_RIGHT
+@snake_test1 .byte BUTTON_RIGHT
+@snake_test2 .byte BUTTON_RIGHT
 
 .addr 0x0200
 
@@ -209,7 +215,6 @@
     ret
 
   @_update_snake_collide
-
   ret
 
 # draw_snake
@@ -221,6 +226,51 @@
   call @ktxt_move_y
   mov $8, SNAKE_HEAD_CHAR
   call @ktxt_putch
+
+  mov $4, @snake_len
+  brt @_draw_snake_f # Exit early if length is zero
+  call @draw_body
+@_draw_snake_f
+  ret
+
+# draw_body
+# Draws the body of the snake
+@draw_body
+  push $1
+  mov $5, $0
+  mov $6, @snake_dir
+  @_draw_body_loop
+    equ $6, BUTTON_RIGHT
+	brt @_draw_body_l
+    equ $6, BUTTON_UP
+	brt @_draw_body_d
+    equ $6, BUTTON_DOWN
+	brt @_draw_body_u
+	# Fallthrough to @_draw_body_l
+  @_draw_body_l
+    dec $1
+    jmp @_draw_body_continue
+  @_draw_body_r
+    inc $1
+    jmp @_draw_body_continue
+  @_draw_body_u
+    add $1, 239
+    jmp @_draw_body_continue
+  @_draw_body_d
+    add $1, 16
+    # Fallthrough to @_draw_body_continue
+
+  @_draw_body_continue
+    mov %e7bf, $1
+    mov $8, SNAKE_BODY_CHAR
+	call @ktxt_putch
+
+    mov $6, %7, $5
+    inc $5
+    lss $5, $4
+    brt @_draw_body_loop
+ 
+  pop $1
   ret
 
 # draw_apple
@@ -255,7 +305,7 @@
   call @update_snake      # Update the snake
   equ $8, GAME_STATE_LOSE # Did we lose (@update_snake leaves state on $8)
   brt @lose_loop          # If so, jump to loser loop
-  sei                     # Allow interrupts
+  sei
   jmp @main_loop          # Restart loop...
 @lose_loop
   jmp @lose_loop

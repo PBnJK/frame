@@ -28,11 +28,21 @@
         <h2 class="region-title" id="runner-title">Runner</h2>
         <div class="region-container" id="runner-container">
           <div id="runner-controls">
-            <button id="runner-run-button" type="">Run</button>
-            <button id="runner-asm-button" type="">Assemble</button>
-            <button id="runner-stop-button" type="">Stop</button>
-            <button id="runner-pause-button" type="">Pause</button>
-            <button id="runner-step-button" type="">Step</button>
+            <div id="runner-button-container">
+              <button id="runner-run-button" type="">Run</button>
+              <button id="runner-asm-button" type="">Assemble</button>
+              <button id="runner-stop-button" type="">Stop</button>
+              <button id="runner-pause-button" type="">Pause</button>
+              <button id="runner-step-button" type="">Step</button>
+            </div>
+            <div id="runner-debug-container">
+              <input
+                id="runner-debug-check"
+                type="checkbox"
+                name="debug-check"
+              />
+              <label for="debug-check">Debug?</label>
+            </div>
           </div>
           <canvas id="runner-canvas"></canvas>
         </div>
@@ -82,7 +92,14 @@
 
           <fieldset>
             <legend>State</legend>
-            <p class="analyser-field" id="analyser-state"></p>
+            <p class="analyser-field" id="analyser-state">Stopped</p>
+          </fieldset>
+
+          <fieldset>
+            <legend>Disassembly</legend>
+            <p class="analyser-field" id="analyser-disasm-0"></p>
+            <p class="analyser-field" id="analyser-disasm-1"></p>
+            <p class="analyser-field" id="analyser-disasm-2"></p>
           </fieldset>
         </div>
       </div>

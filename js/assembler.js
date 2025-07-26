@@ -204,6 +204,7 @@ class Assembler {
   #modeTrie;
   #opMap;
   #modeMap;
+  #debugInfo;
 
   #defines;
 
@@ -215,6 +216,7 @@ class Assembler {
 
     this.#initModeTrie();
     this.#initOpMap();
+    this.#debugInfo = new Map();
   }
 
   /* Ensures that an "enum" has unique values */
@@ -557,6 +559,7 @@ class Assembler {
     return {
       program: this.#program,
       main: this.#startPoint,
+      debug: this.#debugInfo,
     };
   }
 
@@ -1207,6 +1210,8 @@ class Assembler {
     }
 
     const values = this.#getValuesFromArguments(args);
+    this.#emitDebug(opName, values);
+
     switch (mode) {
       case Mode.O:
         this.#emitO(op);
@@ -1486,6 +1491,20 @@ class Assembler {
     }
 
     return null;
+  }
+
+  /* Emits debug info for an op */
+  #emitDebug(op, values) {
+    const args = [];
+    for (const arg of values) {
+      args.push(arg.toString());
+    }
+
+    const argsString = args.join(", ");
+
+    const pos = this.#pos;
+    const info = `${pos} ${op} ${argsString}`;
+    this.#debugInfo.set(pos, info);
   }
 
   /* Emits O op */

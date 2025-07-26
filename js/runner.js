@@ -284,6 +284,10 @@ const analyserFlagNegative = document.getElementById("analyser-flag-neg");
 
 const analyserState = document.getElementById("analyser-state");
 
+const analyserDisassembly0 = document.getElementById("analyser-disasm-0");
+const analyserDisassembly1 = document.getElementById("analyser-disasm-1");
+const analyserDisassembly2 = document.getElementById("analyser-disasm-2");
+
 const Flag = {
   CARRY: Symbol("Carry"),
   INTERRUPT: Symbol("Interrupt"),
@@ -306,9 +310,10 @@ class FrameVM {
 
   #clock;
   #cyclesSinceInterrupt;
-  #needsInterrupt;
 
   #memory;
+  #debug;
+  #debugInfo;
 
   #running;
   #paused;
@@ -319,6 +324,9 @@ class FrameVM {
   #kernelInfo;
 
   constructor() {
+    this.setDebug(false);
+    this.#debugInfo = new Map();
+
     this.#initCanvas();
     this.#initKeyboard();
     this.#initFlags();
@@ -345,17 +353,20 @@ class FrameVM {
     this.reset();
 
     const code = program.program;
-    const main = program.main;
-
     for (let i = 0; i < KERNEL_START_ADDR; i++) {
       this.setMemory(i, code[i]);
     }
 
     /* Setup reset vector */
+    const main = program.main;
+
     const u = main >>> 0;
     const lo = u & 0xff;
     const hi = (u >> 8) & 0xff;
     this.setMemory16(ROM_START_ADDR, lo, hi);
+
+    const info = program.debug;
+    this.#loadDebugInfo(info);
   }
 
   /* Runs the VM */
@@ -418,12 +429,17 @@ class FrameVM {
     return this.#paused;
   }
 
+  /* Set the debug mode */
+  setDebug(to) {
+    this.#debug = to;
+  }
+
   /* Called every frame */
   runCallback() {
     const target = this.#clock + CYCLES_PER_FRAME;
     while (this.#running && this.#clock < target) {
       if (
-        this.#cyclesSinceInterrupt === CYCLES_PER_INTERRUPT &&
+        this.#cyclesSinceInterrupt >= CYCLES_PER_INTERRUPT &&
         this.getFlag(Flag.INTERRUPT)
       ) {
         this.#draw();
@@ -438,7 +454,9 @@ class FrameVM {
 
   /* Executes a single CPU cycle */
   cycle() {
-    this.#updateAnalyser();
+    if (this.#debug) {
+      this.#updateAnalyser();
+    }
 
     const instruction = this.fetchNext();
     const callback = this.#instructions[instruction];
@@ -447,18 +465,6 @@ class FrameVM {
 
   /* Fetches the next byte */
   fetchNext() {
-    if (this.#pc === 0x30d) {
-      console.log(
-        "=>",
-        this.#memory[this.#pc - 3],
-        this.#memory[this.#pc - 2],
-        this.#memory[this.#pc - 1],
-        this.#memory[this.#pc],
-        this.#memory[this.#pc + 1],
-        this.#memory[this.#pc + 2],
-        this.#memory[this.#pc + 3],
-      );
-    }
     const next = this.getMemory(this.#pc++);
     this.#pc &= 0xffff;
 
@@ -473,7 +479,6 @@ class FrameVM {
 
     this.#clock = 0;
     this.#cyclesSinceInterrupt = 1;
-    this.#needsInterrupt = false;
 
     for (let i = 0; i < KERNEL_START_ADDR; i++) {
       this.#memory[i] = 0;
@@ -605,6 +610,13 @@ class FrameVM {
     return this.#kernelInfo;
   }
 
+  /* Loads debug info into the runner */
+  #loadDebugInfo(info) {
+    for (const [k, v] of info) {
+      this.#debugInfo.set(k, v);
+    }
+  }
+
   /* Initializes the HTML canvas */
   #initCanvas() {
     this.#canvas = document.getElementById("runner-canvas");
@@ -712,6 +724,7 @@ class FrameVM {
       this.#memory[i] = code[i];
     }
 
+    this.#loadDebugInfo(kernel.debug);
     this.#kernelInfo = kernelInfo;
   }
 
@@ -1304,7 +1317,9 @@ class FrameVM {
       p.innerText = `\$${rN}: ${rV}`;
     }
 
-    const pc = this.getPC().toString(16);
+    const pos = this.getPC();
+
+    const pc = pos.toString(16);
     analyserPC.innerText = `pc: ${pc}`;
 
     const sp = this.getSP().toString(16);
@@ -1314,6 +1329,11 @@ class FrameVM {
     analyserFlagInterrupt.innerText = `I: ${this.getFlag(Flag.INTERRUPT)}`;
     analyserFlagZero.innerText = `Z: ${this.getFlag(Flag.ZERO)}`;
     analyserFlagNegative.innerText = `N: ${this.getFlag(Flag.NEGATIVE)}`;
+
+    const debug = this.#debugInfo.get(pos);
+    analyserDisassembly0.innerText = analyserDisassembly1.innerText;
+    analyserDisassembly1.innerText = analyserDisassembly2.innerText;
+    analyserDisassembly2.innerText = debug;
   }
 
   /* Performs a syscall */
@@ -1370,9 +1390,6 @@ class FrameVM {
 
   /* Triggers an interrupt */
   #triggerInterrupt() {
-    console.log("INTERRUPT!", this.#memory[2]);
-    this.#needsInterrupt = false;
-
     this.pushToStack16(this.getPC());
 
     const addr = this.getMemory16(INT_START_ADDR);
@@ -1550,4 +1567,8 @@ const stepProgram = () => {
 
 const isProgramPaused = () => {
   return frameVM.isProgramPaused();
+};
+
+const setDebug = (to) => {
+  frameVM.setDebug(to);
 };

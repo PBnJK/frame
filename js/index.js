@@ -11,6 +11,7 @@ const init = () => {
   const runnerStopButton = document.getElementById("runner-stop-button");
   const runnerPauseButton = document.getElementById("runner-pause-button");
   const runnerStepButton = document.getElementById("runner-step-button");
+  const runnerDebugButton = document.getElementById("runner-debug-check");
 
   const asm = () => {
     const sourceProgram = editorCodeEditor.value;
@@ -49,6 +50,10 @@ const init = () => {
 
   runnerStepButton.addEventListener("click", () => {
     stepProgram();
+  });
+
+  runnerDebugButton.addEventListener("click", (e) => {
+    setDebug(e.target.checked);
   });
 };
 
