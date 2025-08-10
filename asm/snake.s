@@ -59,16 +59,16 @@
 .def GAME_STATE_PLAY 0x0
 .def GAME_STATE_LOSE 0x1
 
-@snake_pos_x .byte 0
-@snake_pos_y .byte 0
+@snake_pos_x .byte 3
+@snake_pos_y .byte 3
 @snake_dir   .byte BUTTON_RIGHT
 @snake_ndir  .byte BUTTON_RIGHT
 @game_state  .byte GAME_STATE_PLAY
+@game_update .byte 0
 @apple_pos_x .byte 4
 @apple_pos_y .byte 4
-@snake_len   .byte 3
+@snake_len   .byte 2
 @snake_test0 .byte BUTTON_RIGHT
-@snake_test1 .byte BUTTON_RIGHT
 @snake_test2 .byte BUTTON_RIGHT
 
 .addr 0x0200
@@ -99,14 +99,14 @@
 
   @_lfsr_gen_loop
     lsh $8               # Left-shift the LFSR LSB
-	rol @lfsr_seed_msb   # Rotate LFSR MSB left
+    rol @lfsr_seed_msb   # Rotate LFSR MSB left
     chy                  # Check for carry (rol output)
-	brf @_lfsr_gen_skip  # If the shifted-out bit was 0, skip XOR
-	xor $8, LFSR_MASK    # XOR LFSR LSB with mask
+    brf @_lfsr_gen_skip  # If the shifted-out bit was 0, skip XOR
+    xor $8, LFSR_MASK    # XOR LFSR LSB with mask
 
   @_lfsr_gen_skip
     inc $f               # Tick index
-	equ $f, 8            # Have we completed 8 iterations?
+    equ $f, 8            # Have we completed 8 iterations?
     brf @_lfsr_gen_loop  # If not, loop back
 
   mov @lfsr_seed_lsb, $8 # Update LFSR start state
@@ -121,6 +121,14 @@
   sei $0           # Prevent interrupts
   mov %fffc, @<irq # Setup IRQ handler LSB
   mov %fffd, @>irq # Setup IRQ handler MSB
+  ret
+
+# init
+# Initializes the game
+@init
+  call @init_irq
+  call @ktxt_clear
+  sei # Restore interrupts
   ret
 
 # == SNAKE ==
@@ -199,7 +207,7 @@
     mov $3, @snake_pos_y
     lss $3, 0x8            # Is Y within the bounds?
     brf @_update_snake_die # If not, die
-    jmp @_update_snake_collide
+    jmp @_update_snake_body
 
   @_update_snake_die
     sei $0
@@ -213,6 +221,51 @@
     mov $9, @>str_gameover
     call @ktxt_print
     ret
+
+  @_update_snake_body
+    push $1                     # Save register $1
+    mov $1, @snake_pos_x        # Load snake X coordinate
+	push $2                     # Save register $2
+    mov $2, @snake_pos_y        # Load snake Y coordinate
+    mov $4, @snake_len          # Get snake body "nodes"
+    brt @_update_snake_collide  # Exit early if length is zero
+    mov $5, 0                   # Start counter
+    @_update_snake_body_loop
+      equ $2, BUTTON_LEFT       # Is moving left?
+      brt @_update_snake_body_r # If so, update to the right
+      equ $2, BUTTON_UP         # Is moving up?
+      brt @_update_snake_body_d # If so, update down
+      equ $2, BUTTON_DOWN       # Is moving down?
+      brt @_update_snake_body_u # If so, update up
+      # Fallthrough to @_update_snake_body_l
+    @_update_snake_body_l
+      dec $1
+      jmp @_update_snake_body_continue
+    @_update_snake_body_r
+      inc $1
+      jmp @_update_snake_body_continue
+    @_update_snake_body_u
+      dec $2
+      jmp @_update_snake_body_continue
+    @_update_snake_body_d
+      inc $2
+      # Fallthrough to @_update_snake_body_continue
+
+    @_update_snake_body_continue
+      lss $1, 0x8                  # Is X within the bounds?
+      brf @_update_snake_die       # If not, die
+      lss $2, 0x8                  # Is Y within the bounds?
+      brf @_update_snake_die       # If not, die
+
+      mov $6, %8, $5               # Load next body
+	  mov %8, $5, $3               # Update body position
+      mov $3, $6                   # Load next body
+      inc $5                       # Tick counter
+      equ $5, $4                   # Are we done?
+      brf @_update_snake_body_loop # If not, loop back
+
+    pop $2
+    pop $1
 
   @_update_snake_collide
   ret
@@ -237,16 +290,18 @@
 # Draws the body of the snake
 @draw_body
   push $1
-  mov $5, $0
-  mov $6, @snake_dir
+  mov $1, %e7bf
+  dec $1
+  mov $5, $0            # Prepare counter
+  mov $6, @snake_dir    # Load direction
   @_draw_body_loop
-    equ $6, BUTTON_RIGHT
-	brt @_draw_body_l
-    equ $6, BUTTON_UP
-	brt @_draw_body_d
+    equ $6, BUTTON_LEFT # Is moving left?
+    brt @_draw_body_r   # If so, draw to the right
+    equ $6, BUTTON_UP   # Is moving up?
+    brt @_draw_body_d
     equ $6, BUTTON_DOWN
-	brt @_draw_body_u
-	# Fallthrough to @_draw_body_l
+    brt @_draw_body_u
+    # Fallthrough to @_draw_body_l
   @_draw_body_l
     dec $1
     jmp @_draw_body_continue
@@ -254,23 +309,24 @@
     inc $1
     jmp @_draw_body_continue
   @_draw_body_u
-    add $1, 239
+    add $1, 248
     jmp @_draw_body_continue
   @_draw_body_d
-    add $1, 16
+    add $1, 8
     # Fallthrough to @_draw_body_continue
 
   @_draw_body_continue
-    mov %e7bf, $1
-    mov $8, SNAKE_BODY_CHAR
-	call @ktxt_putch
+    mov %e7bf, $1           # Move cursor
+    mov $8, SNAKE_BODY_CHAR # Load body
+    call @ktxt_putch        # Draws the character
+    sei $0                  # No interrupts
 
-    mov $6, %7, $5
-    inc $5
-    lss $5, $4
-    brt @_draw_body_loop
+    mov $6, %8, $5          # Load next body
+    inc $5                  # Tick counter
+    equ $5, $4              # Are we done?
+    brf @_draw_body_loop    # If not, loop back
  
-  pop $1
+  pop $1                    # Restore $1
   ret
 
 # draw_apple
@@ -284,24 +340,15 @@
   call @ktxt_putch
   ret
 
-# init
-# Initializes the game
-@init
-  call @init_irq
-  call @ktxt_clear
-  sei # Restore interrupts
-  ret
-
 # main
 # Entry point
 @main
   call @init
-  mov $7, $0              # Initialize "update" register
 @main_loop
-  equ $7, $0              # Do we need an update?
+  equ @game_update, $0    # Do we need an update?
   brt @main_loop          # If not, loop
   sei $0                  # No interrupts
-  mov $7, $0              # Reset "update" register
+  mov @game_update, $0    # Reset update
   call @update_snake      # Update the snake
   equ $8, GAME_STATE_LOSE # Did we lose (@update_snake leaves state on $8)
   brt @lose_loop          # If so, jump to loser loop
@@ -316,14 +363,15 @@
   equ $8, $0          # Is in LOSE state? (GAME_STATE_LOSE)
   brf @_irq_f         # If so, exit
 
-  call @lfsr_gen   # Tick the RNG
+  call @lfsr_gen      # Tick the RNG
 
   # Draw everything
   call @ktxt_clear
   call @draw_snake
   call @draw_apple
 
-  mov $7, 1        # Request update
+  mov @game_update, 1 # Request update
 @_irq_f
-  pop $8           # Restore $8
+  pop $8              # Restore $8
   ret
+

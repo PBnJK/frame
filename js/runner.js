@@ -460,6 +460,7 @@ class FrameVM {
 
     const instruction = this.fetchNext();
     const callback = this.#instructions[instruction];
+    console.log(instruction);
     callback();
   }
 
@@ -897,6 +898,21 @@ class FrameVM {
       [Opcode.EQU_AK]: () => {
         const [a, k] = this.#getArgsAK();
         const eq = this.getRegister(a) === k ? 1 : 0;
+
+        this.setFlag(Flag.ZERO, eq);
+      },
+      [Opcode.EQU_PA]: () => {
+        const [p, a] = this.#getArgsPA();
+        const P = this.getMemory(p);
+        const A = this.getRegister(a);
+        const eq = P === A ? 1 : 0;
+
+        this.setFlag(Flag.ZERO, eq);
+      },
+      [Opcode.EQU_PK]: () => {
+        const [p, k] = this.#getArgsPK();
+        const P = this.getMemory(p);
+        const eq = P === k ? 1 : 0;
 
         this.setFlag(Flag.ZERO, eq);
       },

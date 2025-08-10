@@ -65,94 +65,96 @@ const Opcode = {
   /* EQU family */
   EQU_AB: 0x19,
   EQU_AK: 0x1a,
+  EQU_PA: 0x1b,
+  EQU_PK: 0x1c,
 
   /* LSS family */
-  LSS_AB: 0x1b,
-  LSS_AK: 0x1c,
+  LSS_AB: 0x1d,
+  LSS_AK: 0x1e,
 
   /* AND family */
-  AND_ABC: 0x1d,
-  AND_ABK: 0x1e,
-  AND_AB: 0x1f,
-  AND_AK: 0x20,
+  AND_ABC: 0x1f,
+  AND_ABK: 0x20,
+  AND_AB: 0x21,
+  AND_AK: 0x22,
 
   /* OR family */
-  OR_ABC: 0x21,
-  OR_ABK: 0x22,
-  OR_AB: 0x23,
-  OR_AK: 0x24,
+  OR_ABC: 0x23,
+  OR_ABK: 0x24,
+  OR_AB: 0x25,
+  OR_AK: 0x26,
 
   /* XOR family */
-  XOR_ABC: 0x25,
-  XOR_ABK: 0x26,
-  XOR_AB: 0x27,
-  XOR_AK: 0x28,
+  XOR_ABC: 0x27,
+  XOR_ABK: 0x28,
+  XOR_AB: 0x29,
+  XOR_AK: 0x2a,
 
   /* NOT family */
-  NOT_AB: 0x29,
-  NOT_AK: 0x2a,
-  NOT_A: 0x2b,
-  NOT_O: 0x2c,
+  NOT_AB: 0x2b,
+  NOT_AK: 0x2c,
+  NOT_A: 0x2d,
+  NOT_O: 0x2e,
 
   /* LSH family */
-  LSH_ABC: 0x2d,
-  LSH_ABK: 0x2e,
-  LSH_AB: 0x2f,
-  LSH_AK: 0x30,
-  LSH_A: 0x31,
+  LSH_ABC: 0x2f,
+  LSH_ABK: 0x30,
+  LSH_AB: 0x31,
+  LSH_AK: 0x32,
+  LSH_A: 0x33,
 
   /* RSH family */
-  RSH_ABC: 0x32,
-  RSH_ABK: 0x33,
-  RSH_AB: 0x34,
-  RSH_AK: 0x35,
-  RSH_A: 0x36,
+  RSH_ABC: 0x34,
+  RSH_ABK: 0x35,
+  RSH_AB: 0x36,
+  RSH_AK: 0x37,
+  RSH_A: 0x38,
 
   /* ROL family */
-  ROL_A: 0x37,
-  ROL_K: 0x38,
-  ROL_P: 0x39,
+  ROL_A: 0x39,
+  ROL_K: 0x3a,
+  ROL_P: 0x3b,
 
   /* ROR family */
-  ROR_A: 0x3a,
-  ROR_K: 0x3b,
-  ROR_P: 0x3c,
+  ROR_A: 0x3c,
+  ROR_K: 0x3d,
+  ROR_P: 0x3e,
 
   /* ADD family */
-  ADD_ABC: 0x3d,
-  ADD_ABK: 0x3e,
-  ADD_AB: 0x3f,
-  ADD_AK: 0x40,
+  ADD_ABC: 0x3f,
+  ADD_ABK: 0x40,
+  ADD_AB: 0x41,
+  ADD_AK: 0x42,
 
   /* INC family */
-  INC_A: 0x41,
-  INC_P: 0x42,
+  INC_A: 0x43,
+  INC_P: 0x44,
 
   /* DEC family */
-  DEC_A: 0x43,
-  DEC_P: 0x44,
+  DEC_A: 0x45,
+  DEC_P: 0x46,
 
   /* CALL family */
-  CALL_P: 0x45,
+  CALL_P: 0x47,
 
   /* RET family */
-  RET_O: 0x46,
+  RET_O: 0x48,
 
   /* PUSH family */
-  PUSH_A: 0x47,
-  PUSH_K: 0x48,
+  PUSH_A: 0x49,
+  PUSH_K: 0x4a,
 
   /* POP family */
-  POP_A: 0x49,
-  POP_O: 0x4a,
+  POP_A: 0x4b,
+  POP_O: 0x4c,
 
   /* SEI family */
-  SEI_A: 0x4b,
-  SEI_K: 0x4c,
-  SEI_O: 0x4d,
+  SEI_A: 0x4d,
+  SEI_K: 0x4e,
+  SEI_O: 0x4f,
 
   /* CHY family */
-  CHY_O: 0x4e,
+  CHY_O: 0x50,
 };
 
 const Mode = {
@@ -420,6 +422,8 @@ class Assembler {
     this.#opMap.set("equ", {
       [Mode.AB]: Opcode.EQU_AB,
       [Mode.AK]: Opcode.EQU_AK,
+      [Mode.PA]: Opcode.EQU_PA,
+      [Mode.PK]: Opcode.EQU_PK,
     });
 
     this.#opMap.set("lss", {
